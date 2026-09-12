@@ -60,6 +60,31 @@ $xcalibre-pr check this branch for PR readiness
 $xcalibre-kernels review this kernel
 ```
 
+## Upgrade an existing installation
+
+### Claude Code
+
+Refresh the marketplace and update the installed plugin:
+
+```text
+/plugin marketplace update xcalibre-skills
+/plugin update xcalibre-skills@xcalibre-skills
+/reload-plugins
+```
+
+Claude Code can also update the marketplace and installed plugin automatically when auto-update is enabled for the marketplace.
+
+### Codex
+
+Refresh the Git marketplace and reinstall the plugin from the updated catalogue:
+
+```bash
+codex plugin marketplace upgrade xcalibre-skills
+codex plugin add xcalibre-skills@xcalibre-skills
+```
+
+Start a new Codex thread after reinstalling so the updated skills are loaded.
+
 ## Development installation
 
 Clone the repository only when editing or validating the skill collection locally:
