@@ -4,9 +4,9 @@ Reusable agent skills for developing, configuring, validating and documenting co
 
 ## Status
 
-This repository contains an umbrella XCALibre skill and six initial specialist skills. Five were imported as a platform-neutral source set; `xcalibre-pr` is being developed here. They will now be refined and packaged for release.
+This repository contains an umbrella XCALibre skill and six specialist skills for XCALibre.jl and Julia development workflows.
 
-The root `SKILL.md` can already be installed as a standalone umbrella skill in Claude Code or Codex. Claude marketplace and Codex plugin packaging will be added before the first public release.
+The root `SKILL.md` can be installed as a standalone umbrella skill in Claude Code or Codex. Claude marketplace and Codex plugin packaging will be added before the first packaged release.
 
 ## Repository structure
 
@@ -34,18 +34,19 @@ xcalibre-skills/
 - `scripts/`: reusable automation where deterministic execution is useful.
 - `skills/`: specialist skills and their supporting resources.
 
-## Included specialist skills
+## Available skills
 
-| Skill | Purpose |
+| Skill | Description and use |
 |---|---|
-| `julia-benchmarking` | Separate compilation, allocation, data movement and steady-state runtime in Julia benchmarks. |
-| `xcalibre-kernels` | Write and review idiomatic XCALibre.jl field loops and CPU/GPU kernels. |
-| `xcalibre-mesh-types` | Preserve type stability across mesh numeric and index types. |
-| `xcalibre-pr` | Check and prepare pull requests against XCALibre.jl project expectations. |
-| `xcalibre-dev` | Maintain persistent development records for substantial engineering work. |
-| `xcalibre-close` | Close, consolidate and archive work managed through `xcalibre-dev`. |
+| `xcalibre-skills` | Umbrella entry point for the complete collection. Use `/xcalibre-skills` in Claude Code or `$xcalibre-skills` in Codex for general XCALibre.jl work or when the appropriate specialist skill is not known. It selects and loads only the relevant specialist guidance. |
+| `julia-benchmarking` | Provides reliable Julia performance measurement by separating compilation, allocation, data movement and warmed steady-state runtime. Use it when designing or reviewing benchmarks, isolating a representative bottleneck, or comparing CPU and GPU implementations. |
+| `xcalibre-kernels` | Provides XCALibre.jl conventions for fused field loops and `KernelAbstractions.jl` kernels across CPU and GPU backends. Use it when adding, reviewing or refactoring computational kernels and backend-independent field operations. |
+| `xcalibre-mesh-types` | Preserves type stability for `Mesh2`, `Mesh3`, cells, faces and mesh-derived scalar or index values. Use it when code must work correctly with `Float32`, `Float64`, `Int32` and `Int64` mesh configurations. |
+| `xcalibre-dev` | Maintains a persistent context vault for substantial features, phases, refactors and debugging campaigns. Use it when engineering work must remain recoverable and understandable across multiple development sessions. Do not use it for small edits, reviews or general questions. |
+| `xcalibre-close` | Consolidates and cleans the records, examples, documentation and generated evidence at feature or development close. It runs the `xcalibre-pr` preflight checks and reports readiness, but does not commit, push, merge or open a pull request. Invoke `xcalibre-pr` separately for submission. |
+| `xcalibre-pr` | Checks and prepares an XCALibre.jl contribution for submission. Use it to verify branch synchronisation, PR scope, changelog entries, tests, documentation, examples, comment length, dependencies, licences, human authorship and AI disclosure. It lists unresolved items and requires consent before corrective work or submission actions. |
 
-The two development workflow skills are currently source material for refinement. Their repository-changing and Git operations should be used only with explicit authority for the affected repository.
+With the standalone installation, invoke the umbrella skill and name the required workflow. Platform-specific packaging will also expose the specialist skills directly as `/skill-name` in Claude Code and `$skill-name` in Codex.
 
 ## Install in Claude Code
 
