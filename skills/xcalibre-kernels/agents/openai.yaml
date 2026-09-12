@@ -1,0 +1,4 @@
+interface:
+  display_name: "XCALibre Kernels"
+  short_description: "Write idiomatic XCALibre Julia kernels"
+  default_prompt: "Use $xcalibre-kernels to write an idiomatic XCALibre.jl kernel."

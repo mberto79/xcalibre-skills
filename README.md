@@ -4,9 +4,9 @@ Reusable agent skills for developing, configuring, validating and documenting co
 
 ## Status
 
-This repository is at the initial development stage. The root `SKILL.md` can be installed as a standalone skill in Claude Code or Codex.
+This repository contains an umbrella XCALibre skill and six initial specialist skills. Five were imported as a platform-neutral source set; `xcalibre-pr` is being developed here. They will now be refined and packaged for release.
 
-Claude marketplace packaging will be added before the first marketplace release. That release will include the required plugin and marketplace manifests.
+The root `SKILL.md` can already be installed as a standalone umbrella skill in Claude Code or Codex. Claude marketplace and Codex plugin packaging will be added before the first public release.
 
 ## Repository structure
 
@@ -19,6 +19,12 @@ xcalibre-skills/
 |-- references/
 |-- scripts/
 `-- skills/
+    |-- julia-benchmarking/
+    |-- xcalibre-close/
+    |-- xcalibre-dev/
+    |-- xcalibre-kernels/
+    |-- xcalibre-mesh-types/
+    `-- xcalibre-pr/
 ```
 
 - `SKILL.md`: shared, platform-neutral skill instructions.
@@ -26,7 +32,20 @@ xcalibre-skills/
 - `assets/`: templates and other files used in generated outputs.
 - `references/`: technical material loaded only when relevant.
 - `scripts/`: reusable automation where deterministic execution is useful.
-- `skills/`: reserved for future specialist XCALibre skills.
+- `skills/`: specialist skills and their supporting resources.
+
+## Included specialist skills
+
+| Skill | Purpose |
+|---|---|
+| `julia-benchmarking` | Separate compilation, allocation, data movement and steady-state runtime in Julia benchmarks. |
+| `xcalibre-kernels` | Write and review idiomatic XCALibre.jl field loops and CPU/GPU kernels. |
+| `xcalibre-mesh-types` | Preserve type stability across mesh numeric and index types. |
+| `xcalibre-pr` | Check and prepare pull requests against XCALibre.jl project expectations. |
+| `xcalibre-dev` | Maintain persistent development records for substantial engineering work. |
+| `xcalibre-close` | Close, consolidate and archive work managed through `xcalibre-dev`. |
+
+The two development workflow skills are currently source material for refinement. Their repository-changing and Git operations should be used only with explicit authority for the affected repository.
 
 ## Install in Claude Code
 
@@ -137,8 +156,9 @@ Run `git pull` inside the installed `xcalibre-skills` directory. Restart the hos
 - Keep shared routing and essential constraints in `SKILL.md`.
 - Keep detailed technical guidance in focused files under `references/`.
 - Add scripts only when repeatable automation improves correctness or reliability.
-- Keep each future specialist skill focused on one identifiable XCALibre.jl workflow.
+- Keep each specialist skill focused on one identifiable XCALibre.jl or Julia development workflow.
 - Validate technical claims against the relevant XCALibre.jl source and documentation.
+- Keep one neutral source tree under `skills/`; generate or package platform-specific layouts from that source rather than maintaining divergent Claude and Codex copies.
 
 ## Claude marketplace release
 
