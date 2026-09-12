@@ -1,0 +1,35 @@
+{
+  "name": "xcalibre-skills",
+  "version": "0.1.0",
+  "description": "Reusable skills for developing, validating and documenting XCALibre.jl workflows.",
+  "author": {
+    "name": "Humberto Medina",
+    "email": "h.medina@aerofluids.org",
+    "url": "https://github.com/mberto79"
+  },
+  "homepage": "https://github.com/mberto79/xcalibre-skills#readme",
+  "repository": "https://github.com/mberto79/xcalibre-skills",
+  "keywords": [
+    "xcalibre",
+    "julia",
+    "cfd",
+    "aerodynamics"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "XCALibre Skills",
+    "shortDescription": "XCALibre.jl development workflows",
+    "longDescription": "A cross-platform collection of focused skills for XCALibre.jl and Julia development, validation, documentation and contribution workflows.",
+    "developerName": "Humberto Medina",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Skills"
+    ],
+    "websiteURL": "https://github.com/mberto79/xcalibre-skills",
+    "defaultPrompt": [
+      "Help me develop this XCALibre.jl change.",
+      "Check this XCALibre.jl contribution for a PR.",
+      "Review this Julia kernel for XCALibre.jl."
+    ]
+  }
+}

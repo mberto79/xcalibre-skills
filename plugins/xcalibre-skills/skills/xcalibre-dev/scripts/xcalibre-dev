@@ -1,0 +1,842 @@
+#!/usr/bin/env python3
+"""Validate, resume, and migrate a repository Context Vault."""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+
+
+CORE_RENAMES = {
+    "NEXT.md": "activeContext.md",
+    "PLAN.md": "roadmap.md",
+    "SPEC.md": "spec.md",
+    "ARCHITECTURE.md": "architecture.md",
+    "GOTCHAS.md": "gotchas.md",
+    "DECISIONS.md": "decisions.md",
+}
+DEFAULT_BUDGETS = {
+    "SCHEMA.md": 50,
+    "activeContext.md": 60,
+    "roadmap.md": 120,
+    "phaseRoadmap.md": 120,
+    "spec.md": 120,
+    "architecture.md": 100,
+    "gotchas.md": 90,
+}
+DEFAULT_PLAN_BUDGET = 150
+BLOCK_MAX_CHARS = 2600
+# Per-record block caps: a 120-line record of 2,600-character rows is 300 KB. Table rows are exempt.
+BLOCK_CAPS = {
+    "activeContext.md": 900,
+    "roadmap.md": 1200,
+    "phaseRoadmap.md": 1200,
+    "architecture.md": 1600,
+}
+PLAN_BLOCK_CAP = 1600
+EMITTED = ("activeContext.md", "gotchas.md")
+HEADER_FIELDS = ("LOAD", "updated", "STATE", "STEP", "HEAD", "BRANCH", "GATE", "resume")
+STATES = {"PLANNING", "REVIEWING", "BUILDING", "GATING", "COMMITTING", "BLOCKED", "IDLE"}
+TEXT_SUFFIXES = {".md", ".jl", ".sh", ".py", ".toml", ".yaml", ".yml", ".json", ".txt"}
+SKIP_PARTS = {".git", "logs", "evidence", "fixtures"}
+
+REFERENCE = Path(__file__).resolve().parent.parent / "reference"
+TEMPLATES = {
+    "SCHEMA.md": "SCHEMA.md",
+    "activeContext.md": "activeContext.md",
+    "roadmap.md": "roadmap.md",
+    "phaseRoadmap.md": "phaseRoadmap.md",
+    "spec.md": "spec.md",
+    "architecture.md": "architecture.md",
+    "gotchas.md": "gotchas.md",
+    "decisions.md": "decisions.md",
+    "plan.md": "plan.md",
+    "gate_results.md": "gate_results.md",
+    "archive-README.md": "archive-README.md",
+    "scripts-INDEX.md": "scripts-INDEX.md",
+    "feature-spec.md": "feature-spec.md",
+    "feature-architecture.md": "feature-architecture.md",
+}
+
+
+def template(name: str) -> str:
+    """The reference form of one record, read from the skill's own `reference/`."""
+    path = REFERENCE / TEMPLATES[name]
+    if not path.is_file():
+        raise SystemExit(f"missing skill template: {path}")
+    return path.read_text(encoding="utf-8")
+
+
+SLUG = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")
+
+
+def vault(root: Path, feature: str | None = None) -> Path:
+    """The vault a command acts on: the project's, or one feature's own."""
+    if feature is None:
+        return root / "dev"
+    if not SLUG.fullmatch(feature):
+        raise SystemExit(f"not a feature slug: {feature} (lowercase words joined by hyphens)")
+    return root / "dev" / "features" / feature
+
+
+def vaults(root: Path) -> list[Path]:
+    """Every vault in the repository: the project's first, then each feature's."""
+    found = [root / "dev"]
+    features = root / "dev" / "features"
+    if features.is_dir():
+        found += [path for path in sorted(features.iterdir()) if (path / "spec.md").is_file()]
+    return found
+
+
+def label(root: Path, dev: Path) -> str:
+    return dev.relative_to(root).as_posix()
+
+
+def root_path(value: str) -> Path:
+    root = Path(value).expanduser().resolve()
+    if not (root / ".git").exists():
+        raise SystemExit(f"not a Git repository root: {root}")
+    return root
+
+
+def run_git(root: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", *args], cwd=root, text=True, stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT, check=False
+    ).stdout.rstrip()
+
+
+def parse_header(path: Path) -> dict[str, str]:
+    found: dict[str, str] = {}
+    if not path.is_file():
+        return found
+    for line in path.read_text(encoding="utf-8").splitlines()[:30]:
+        match = re.match(r"^([A-Za-z]+):\s*(.*)$", line)
+        if match and match.group(1) in HEADER_FIELDS:
+            found[match.group(1)] = match.group(2).strip()
+    return found
+
+
+def load_paths(root: Path, header: dict[str, str]) -> list[Path]:
+    value = re.sub(r"^(read|load)\s+", "", header.get("LOAD", ""), flags=re.I)
+    names = re.findall(r"dev/[A-Za-z0-9_./-]+\.md", value)
+    if not names:
+        names = ["dev/activeContext.md", "dev/spec.md", "dev/architecture.md"]
+    return [root / name for name in dict.fromkeys(names)]
+
+
+def schema_exceptions(path: Path) -> dict[str, int]:
+    limits: dict[str, int] = {}
+    if not path.is_file():
+        return limits
+    in_section = False
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("## Budget exceptions"):
+            in_section = True
+            continue
+        if in_section and line.startswith("## "):
+            break
+        match = re.match(r"(?:`)?(?:dev/)?([^`:]+\.md)(?:`)?\s*:\s*(\d+)\s*-", line)
+        if in_section and match:
+            limits[match.group(1)] = int(match.group(2))
+    return limits
+
+
+DECISION_ENTRY = re.compile(r"^- (\d{4}-\d{2}-\d{2}) D(\d+)\b")
+DECISION_MAX_CHARS = 800
+
+
+def decision_errors(path: Path, limit: int = 12) -> list[str]:
+    """One entry per decision, one line, bounded, with a why and a monotonic id."""
+    if not path.is_file():
+        return []
+    lines = path.read_text(encoding="utf-8").splitlines()
+    starts = [i for i, line in enumerate(lines) if DECISION_ENTRY.match(line)]
+    errors: list[str] = []
+    if not starts:
+        return errors
+    for index, first in enumerate(starts):
+        last = starts[index + 1] if index + 1 < len(starts) else len(lines)
+        block = [line for line in lines[first:last] if line.strip()]
+        ident = DECISION_ENTRY.match(lines[first]).group(2)
+        where = f"decisions.md:{first + 1} (D{ident})"
+        if len(lines[first]) > DECISION_MAX_CHARS:
+            errors.append(
+                f"{where} is {len(lines[first])} characters (limit {DECISION_MAX_CHARS}): what needs"
+                " more is a plan, an architecture note, a telemetry artefact or a gotcha"
+            )
+        if "why:" not in " ".join(block).lower():
+            errors.append(f"{where} states no `why:`")
+        for offset, line in enumerate(lines[first + 1:last], start=first + 2):
+            if line.strip().startswith("- ") or line.startswith("#"):
+                errors.append(f"decisions.md:{offset} is not part of an entry")
+    ids = [int(DECISION_ENTRY.match(lines[i]).group(2)) for i in starts]
+    for previous, current in zip(ids, ids[1:]):
+        if current <= previous:
+            errors.append(f"decisions.md: id D{current} does not follow D{previous}")
+    if len(errors) > limit:
+        extra = len(errors) - limit
+        errors = errors[:limit] + [f"decisions.md: {extra} further format errors"]
+    return errors
+
+
+PHASE_ROW = re.compile(r"^-\s*\[([ x-])\]\s*\**\s*(P\d+)\b")
+MILESTONE_ROW = re.compile(r"^-\s*\[([ x-])\]\s*\**\s*(P\d+-M[0-9A-Za-z]+)\b(?!-S)")
+STEP_ROW = re.compile(r"^-\s*\[([ x-])\]\s*\**\s*(P\d+-M[0-9A-Za-z]+-S[0-9A-Za-z]+)\b")
+PHASE_DECL = re.compile(r"^phase:\s*(P\d+|none)\b")
+PLAN_NAME = re.compile(r"^p(\d+)-m([0-9a-z]+)-[a-z0-9-]+\.md$")
+CLOSED_UNDELIVERED = ("SUPERSEDED BY", "ABSORBED BY", "WITHDRAWN", "DEFERRED TO", "SPLIT INTO")
+
+
+def rows(text: str, pattern: re.Pattern[str]) -> list[tuple[str, str, str]]:
+    """(state, id, whole line) for every list row matching `pattern`."""
+    found = []
+    for line in text.splitlines():
+        match = pattern.match(line.strip())
+        if match:
+            found.append((match.group(1), match.group(2), line))
+    return found
+
+
+def id_errors(where: str, found: list[tuple[str, str, str]]) -> list[str]:
+    """IDs are unique, and a row closed without delivering says where the work went."""
+    errors: list[str] = []
+    seen: set[str] = set()
+    for state, ident, line in found:
+        if ident in seen:
+            errors.append(f"{where}: {ident} is used twice; IDs are allocated, never reused")
+        seen.add(ident)
+        if state == "-" and not any(token in line for token in CLOSED_UNDELIVERED):
+            errors.append(
+                f"{where}: {ident} is closed undelivered and names no successor "
+                f"({'/'.join(CLOSED_UNDELIVERED)})"
+            )
+    return errors
+
+
+def structure_errors(dev: Path) -> list[str]:
+    """Phase, milestone, step and plan naming: the conventions a reader traces work by."""
+    errors: list[str] = []
+    phase_path, road_path = dev / "phaseRoadmap.md", dev / "roadmap.md"
+    if not phase_path.is_file() or not road_path.is_file():
+        return errors
+    phase_text = phase_path.read_text(encoding="utf-8")
+    road_text = road_path.read_text(encoding="utf-8")
+
+    phase = None
+    for line in phase_text.splitlines()[:20]:
+        match = PHASE_DECL.match(line.strip())
+        if match:
+            phase = match.group(1)
+            break
+    if phase is None:
+        errors.append(
+            "phaseRoadmap.md declares no `phase: P<n> - <title>` line (`phase: none` between phases)"
+        )
+    elif phase == "none":
+        return errors
+
+    road = rows(road_text, PHASE_ROW)
+    errors.extend(id_errors("roadmap.md", road))
+    if phase and phase not in {ident for _, ident, _ in road}:
+        errors.append(f"roadmap.md has no row for the active phase {phase}")
+
+    milestones = rows(phase_text, MILESTONE_ROW)
+    errors.extend(id_errors("phaseRoadmap.md", milestones))
+    if phase:
+        for _, ident, _ in milestones:
+            if not ident.startswith(phase + "-"):
+                errors.append(f"phaseRoadmap.md: {ident} does not belong to the active phase {phase}")
+
+    inline = rows(phase_text, STEP_ROW)
+    errors.extend(id_errors("phaseRoadmap.md", inline))
+    known = {ident for _, ident, _ in milestones}
+    for _, step, _ in inline:
+        owner = step.rsplit("-S", 1)[0]
+        if owner not in known:
+            errors.append(f"phaseRoadmap.md: step {step} has no milestone row for {owner}")
+    plans = dev / "plans"
+    if plans.is_dir():
+        for path in sorted(plans.glob("*.md")):
+            match = PLAN_NAME.match(path.name)
+            if not match:
+                errors.append(
+                    f"plans/{path.name} is not named `p<n>-m<k>-<slug>.md`, so it cannot be traced"
+                    " to a milestone"
+                )
+                continue
+            ident = f"P{match.group(1)}-M{match.group(2).upper()}"
+            folded = {name.upper(): name for name in known}
+            if ident not in folded:
+                errors.append(f"plans/{path.name} names {ident}, which phaseRoadmap.md does not list")
+            ident = folded.get(ident, ident)
+            text = path.read_text(encoding="utf-8")
+            steps = rows(text, STEP_ROW)
+            errors.extend(id_errors(f"plans/{path.name}", steps))
+            for _, step, _ in steps:
+                if not step.upper().startswith(ident.upper() + "-S"):
+                    errors.append(f"plans/{path.name}: step {step} does not belong to {ident}")
+    return errors
+
+
+SPEC_SECTIONS = ("goal", "vocabulary", "priority", "quality bars", "requirements", "acceptance")
+REQUIREMENT = re.compile(r"^([A-Z]{1,2}\d+[a-z]?)\s+(.*)$")
+REQUIREMENT_MAX_CHARS = 480
+
+
+def spec_errors(path: Path, limit: int = 12) -> list[str]:
+    """A requirement is `<ID> <WHAT IT ENFORCES, IN CAPITALS> - <a brief statement>`, and short."""
+    if not path.is_file():
+        return []
+    lines = path.read_text(encoding="utf-8").splitlines()
+    errors: list[str] = []
+
+    headings = {line[3:].strip().lower() for line in lines if line.startswith("## ")}
+    for section in SPEC_SECTIONS:
+        if section not in headings:
+            errors.append(f"spec.md has no `## {section}` section")
+
+    start = end = None
+    for index, line in enumerate(lines):
+        if line.startswith("## ") and "requirements" in line.lower() and start is None:
+            start = index + 1
+        elif start is not None and line.startswith("## "):
+            end = index
+            break
+    if start is None:
+        return errors[:limit]
+    body = lines[start:end if end is not None else len(lines)]
+
+    starts = [i for i, line in enumerate(body) if REQUIREMENT.match(line)]
+    seen: set[str] = set()
+    for order, first in enumerate(starts):
+        last = starts[order + 1] if order + 1 < len(starts) else len(body)
+        block = [line for line in body[first:last] if line.strip()]
+        ident, rest = REQUIREMENT.match(body[first]).groups()
+        where = f"spec.md: {ident}"
+        if ident in seen:
+            errors.append(f"{where} is used twice; requirement IDs are permanent and unique")
+        seen.add(ident)
+        if len(body[first]) > REQUIREMENT_MAX_CHARS:
+            errors.append(
+                f"{where} is {len(body[first])} characters (limit {REQUIREMENT_MAX_CHARS}): what"
+                " needs more is architecture, method or a decision"
+            )
+        title = rest.split(" - ")[0] if " - " in rest else None
+        if title is None:
+            errors.append(f"{where} has no `<WHAT IT ENFORCES, IN CAPITALS> - <statement>` head")
+        else:
+            bare = re.sub(r"`[^`]*`", "", title)
+            if any(character.islower() for character in bare):
+                errors.append(f"{where}: what it enforces is not in capitals: {title.strip()!r}")
+    if len(errors) > limit:
+        extra = len(errors) - limit
+        errors = errors[:limit] + [f"spec.md: {extra} further format errors"]
+    return errors
+
+
+BLOCK_START = (
+    re.compile(r"^\s*$"),
+    re.compile(r"^#"),
+    re.compile(r"^\|"),
+    re.compile(r"^\s*```"),
+    re.compile(r"^\s*([-*+]|\d+\.)\s"),
+    re.compile(r"^>"),
+    re.compile(r"^[A-Z]{1,2}\d+[a-z]?\s"),
+    re.compile(r"^(LOAD|updated|STATE|STEP|HEAD|BRANCH|GATE|resume|phase):"),
+)
+
+
+def block_errors(here: str, name: str, path: Path, limit: int = 4,
+                 cap: int = BLOCK_MAX_CHARS) -> list[str]:
+    """ONE BLOCK, ONE LINE: a paragraph, list item, table row or entry is never hard-wrapped.
+
+    Hard-wrapped prose cannot be read or edited as prose, and a line count then measures the
+    wrapping rather than the content - which is how one record came to hold a 7,414-character
+    table cell inside a 100-line budget. The bound that replaces it is per BLOCK.
+    """
+    if not path.is_file():
+        return []
+    errors: list[str] = []
+    lines = path.read_text(encoding="utf-8").splitlines()
+    broken: list[int] = []
+    long: list[tuple[int, int]] = []
+    fence = False
+    for index, line in enumerate(lines):
+        if line.lstrip().startswith("```"):
+            fence = not fence
+            continue
+        if fence:
+            continue
+        previous = lines[index - 1] if index else ""
+        if previous.lstrip().startswith("#"):
+            previous = ""                      # a heading is its own block; prose may follow it
+        if index and previous.strip() and not any(p.match(line) for p in BLOCK_START):
+            broken.append(index + 1)
+        size = len(line.replace(f"{here}/", "dev/"))
+        if size > cap and not line.startswith("|"):
+            long.append((index + 1, size))
+    if broken:
+        shown = ", ".join(str(number) for number in broken[:limit])
+        extra = f", and {len(broken) - limit} more" if len(broken) > limit else ""
+        errors.append(
+            f"blocks: {here}/{name} hard-wraps a block across lines {shown}{extra} -"
+            " one paragraph, list item or entry is ONE line"
+        )
+    for number, size in long[:limit]:
+        errors.append(
+            f"blocks: {here}/{name} line {number} is {size} characters"
+            f" (limit {cap}): split it, or it belongs in another record"
+        )
+    return errors
+
+
+def vault_errors(root: Path, dev: Path) -> list[str]:
+    """Every clause this skill can check, read of ONE vault."""
+    here = label(root, dev)
+    errors: list[str] = []
+    required = ["SCHEMA.md", "activeContext.md", "roadmap.md", "phaseRoadmap.md", "spec.md",
+                "architecture.md", "gotchas.md", "decisions.md"]
+    for name in required:
+        if not (dev / name).is_file():
+            errors.append(f"missing {here}/{name}")
+    for name in CORE_RENAMES:
+        if (dev / name).exists():
+            errors.append(f"legacy path remains: {here}/{name}")
+
+    header = parse_header(dev / "activeContext.md")
+    for field in HEADER_FIELDS:
+        if field not in header or not header[field]:
+            errors.append(f"{here}: activeContext header missing {field}")
+    if header.get("STATE") not in STATES:
+        errors.append(f"{here}: invalid STATE: {header.get('STATE', '<missing>')}")
+    for path in load_paths(root, header):
+        if not path.is_file():
+            errors.append(f"{here}: LOAD path missing: {path.relative_to(root)}")
+
+    exceptions = schema_exceptions(dev / "SCHEMA.md")
+    limits = DEFAULT_BUDGETS | exceptions
+    for name, limit in limits.items():
+        path = dev / name
+        if path.is_file():
+            lines = len(path.read_text(encoding="utf-8").splitlines())
+            if lines > limit:
+                errors.append(f"budget: {here}/{name} has {lines} lines (limit {limit})")
+            errors.extend(block_errors(here, name, path, cap=BLOCK_CAPS.get(name, BLOCK_MAX_CHARS)))
+
+    phase_roadmap = dev / "phaseRoadmap.md"
+    phase_text = phase_roadmap.read_text(encoding="utf-8") if phase_roadmap.is_file() else ""
+    plans = dev / "plans"
+    if plans.is_dir():
+        for path in sorted(plans.glob("*.md")):
+            rel = path.relative_to(dev).as_posix()
+            if f"{here}/{rel}" not in phase_text:
+                errors.append(f"{here}: live plan is not linked from phaseRoadmap.md: {rel}")
+            if rel not in exceptions:
+                lines = len(path.read_text(encoding="utf-8").splitlines())
+                if lines > DEFAULT_PLAN_BUDGET:
+                    errors.append(
+                        f"budget: {here}/{rel} has {lines} lines (limit {DEFAULT_PLAN_BUDGET})"
+                    )
+            errors.extend(block_errors(here, rel, path, cap=PLAN_BLOCK_CAP))
+
+    errors.extend(block_errors(here, "decisions.md", dev / "decisions.md"))
+    errors.extend(f"{here}: {error}" for error in decision_errors(dev / "decisions.md"))
+    errors.extend(f"{here}: {error}" for error in spec_errors(dev / "spec.md"))
+    errors.extend(f"{here}: {error}" for error in structure_errors(dev))
+
+    bench = dev / "telemetry" / "benchmarks.csv"
+    if not bench.is_file():
+        errors.append(f"missing {here}/telemetry/benchmarks.csv")
+    elif bench.read_text(encoding="utf-8").splitlines()[:1] != ["metric_key,value"]:
+        errors.append(f"{here}: benchmarks.csv header must be metric_key,value")
+    gates = dev / "telemetry" / "gate_results.md"
+    expected = "| Timestamp | Session # | Gate Name | Target Metric | Actual Result | Status | Commit |"
+    if not gates.is_file() or expected not in gates.read_text(encoding="utf-8"):
+        errors.append(f"{here}: gate_results.md is missing its required table header")
+    return errors
+
+
+COMMENT_PREFIX = {
+    ".jl": "#", ".py": "#", ".sh": "#", ".rb": "#", ".r": "#", ".pl": "#", ".yml": "#",
+    ".yaml": "#", ".toml": "#", ".jl.in": "#",
+    ".c": "//", ".h": "//", ".cc": "//", ".cpp": "//", ".hpp": "//", ".cs": "//",
+    ".go": "//", ".rs": "//", ".java": "//", ".js": "//", ".ts": "//", ".tsx": "//",
+    ".jsx": "//", ".swift": "//", ".kt": "//", ".scala": "//", ".php": "//",
+}
+SKIP_DIRS = {".git", "node_modules", "target", "build", "dist", "__pycache__", ".venv", "venv"}
+COMMENT_LIMIT = 3
+
+
+def comment_errors(root: Path, limit: int = 12) -> list[str]:
+    """A COMMENT IS AT MOST THREE LINES AND A BLANK LINE DOES NOT RESET THE COUNT.
+
+    What is counted is every consecutive comment line up to the next line of CODE, however it is
+    spaced, so paragraphing a narrative is not a way past the rule. Only code ends a comment.
+    """
+    errors: list[str] = []
+    for path in sorted(root.rglob("*")):
+        if not path.is_file() or any(part in SKIP_DIRS for part in path.parts):
+            continue
+        prefix = COMMENT_PREFIX.get(path.suffix)
+        if prefix is None:
+            continue
+        try:
+            lines = path.read_text(encoding="utf-8").split("\n")
+        except (UnicodeDecodeError, OSError):
+            continue
+        i = 1 if lines and lines[0].startswith("#!") else 0
+        while i < len(lines):
+            if lines[i].strip().startswith(prefix):
+                j = k = i
+                n = 0
+                while k < len(lines):
+                    stripped = lines[k].strip()
+                    if stripped.startswith(prefix):
+                        j, n = k, n + 1
+                    elif stripped:
+                        break
+                    k += 1
+                if n > COMMENT_LIMIT:
+                    rel = path.relative_to(root)
+                    errors.append(
+                        f"comments: {rel}:{i + 1} is {n} comment lines (limit {COMMENT_LIMIT}): "
+                        "a blank line does not end a comment; move the reasoning to decisions.md"
+                    )
+                    if len(errors) >= limit:
+                        return errors
+                i = j + 1
+            else:
+                i += 1
+    return errors
+
+
+def check(root: Path, quiet: bool = False, feature: str | None = None) -> int:
+    targets = [vault(root, feature)] if feature else vaults(root)
+    errors: list[str] = []
+    for dev in targets:
+        errors.extend(vault_errors(root, dev))
+    errors.extend(comment_errors(root))
+    if not quiet:
+        if errors:
+            print("Context Vault: INVALID")
+            for error in errors:
+                print(f"- {error}")
+        else:
+            names = ", ".join(label(root, dev) for dev in targets)
+            print(f"Context Vault: valid ({names})")
+    return 1 if errors else 0
+
+
+def init(root: Path, feature: str | None = None) -> int:
+    """Scaffold a vault from the skill's own reference forms. Never overwrites a record.
+
+    With `feature`, the vault is that FEATURE's own: its spec states what the FEATURE must be true
+    of, its roadmap is the technical roadmap for building it. It is placed beside the project's
+    vault when one exists, and IS the project's vault when none does.
+    """
+    dev = vault(root, feature)
+    if feature and not (root / "dev" / "spec.md").is_file():
+        dev = root / "dev"
+    here = label(root, dev)
+    made, kept = [], []
+    for name in ("", "plans", "telemetry", "scripts", "archive", "archive/phases",
+                 "archive/plans", "archive/reviews"):
+        (dev / name).mkdir(parents=True, exist_ok=True)
+    seed = {
+        "SCHEMA.md": "SCHEMA.md",
+        "activeContext.md": "activeContext.md",
+        "roadmap.md": "roadmap.md",
+        "phaseRoadmap.md": "phaseRoadmap.md",
+        "spec.md": "feature-spec.md" if feature else "spec.md",
+        "architecture.md": "feature-architecture.md" if feature else "architecture.md",
+        "gotchas.md": "gotchas.md",
+        "decisions.md": "decisions.md",
+        "telemetry/gate_results.md": "gate_results.md",
+        "archive/README.md": "archive-README.md",
+        "scripts/INDEX.md": "scripts-INDEX.md",
+    }
+    for rel, name in seed.items():
+        path = dev / rel
+        (kept if path.exists() else made).append(f"{here}/{rel}")
+        if not path.exists():
+            body = template(name).replace("dev/", f"{here}/")
+            if feature:
+                body = body.replace("<feature>", feature)
+            path.write_text(body, encoding="utf-8")
+    bench = dev / "telemetry" / "benchmarks.csv"
+    (kept if bench.exists() else made).append(f"{here}/telemetry/benchmarks.csv")
+    if not bench.exists():
+        bench.write_text("metric_key,value\n", encoding="utf-8")
+    for path in made:
+        print(f"created {path}")
+    for path in kept:
+        print(f"kept    {path}")
+    if feature:
+        print(f"\nThis vault is `{feature}`'s own. Read the host codebase and write "
+              f"{here}/architecture.md's incorporation section FIRST - where the feature attaches, "
+              "what it may not break - then state the FEATURE's outcomes in "
+              f"{here}/spec.md, then its phases and milestones. Nothing the user did not say and "
+              "the codebase does not imply is a requirement; it is an open question.")
+    else:
+        print(f"\nFill in `{here}/spec.md` first, then `{here}/roadmap.md`'s phases and "
+              f"`{here}/phaseRoadmap.md`'s milestones. Run `check` when they say something.")
+    return 0
+
+
+def plan(root: Path, milestone: str, slug: str, feature: str | None = None) -> int:
+    """Create one milestone plan under the naming the roadmap and the check both expect."""
+    match = re.fullmatch(r"P(\d+)-M([0-9A-Za-z]+)", milestone.upper())
+    if not match:
+        raise SystemExit(f"not a milestone id: {milestone} (expected P<n>-M<k>)")
+    if not re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", slug):
+        raise SystemExit(f"not a slug: {slug} (lowercase words joined by hyphens)")
+    ident = f"P{match.group(1)}-M{match.group(2).upper()}"
+    dev = vault(root, feature)
+    path = dev / "plans" / f"p{match.group(1)}-m{match.group(2).lower()}-{slug}.md"
+    if path.exists():
+        raise SystemExit(f"already exists: {path}")
+    body = template("plan.md").replace("P1-M1", ident)
+    path.write_text(body, encoding="utf-8")
+    rel = path.relative_to(root).as_posix()
+    print(f"created {rel}")
+    here = label(root, dev)
+    print(f"Now link it from {ident}'s row in {here}/phaseRoadmap.md and append it to "
+          f"{here}/activeContext.md's LOAD line while it is live.")
+    return 0
+
+
+def resume(root: Path, full: bool = False, feature: str | None = None) -> int:
+    """Emit the records a session must have READ before it acts, and name the rest.
+
+    `activeContext.md` says what to do next and `gotchas.md` says how work is done here - the
+    ladder, the cheapest artefact that answers a question, what a gate is for. The other `LOAD`
+    records are consulted on demand, so they are manifested rather than emitted.
+    """
+    dev = vault(root, feature)
+    active = dev / "activeContext.md"
+    header = parse_header(active)
+    print("=== GIT ===")
+    print(f"root: {root}")
+    print(f"HEAD: {run_git(root, 'rev-parse', '--short', 'HEAD')}")
+    print(f"branch: {run_git(root, 'branch', '--show-current')}")
+    status = run_git(root, "status", "--short")
+    print("status:\n" + (status or "clean"))
+    print("recent:\n" + run_git(root, "log", "-3", "--oneline", "--decorate"))
+    unpushed = run_git(root, "rev-list", "--count", "@{upstream}..HEAD")
+    if not unpushed.isdigit():
+        print("unpushed: no upstream - push -u when the first step lands")
+    elif int(unpushed):
+        print(f"unpushed: {unpushed} commits - push before this session ends")
+    else:
+        print("unpushed: 0")
+    print(f"vault: {'valid' if check(root, quiet=True) == 0 else 'INVALID (run check)'}")
+    written = header.get("HEAD", "")
+    if written:
+        behind = run_git(root, "rev-list", "--count", f"{written}..HEAD")
+        if behind.isdigit() and int(behind) > 0:
+            print(f"activeContext HEAD: {written} - {behind} commits behind (record, not an error)")
+    paths = load_paths(root, header)
+    lead = [active, *(dev / name for name in EMITTED if name != "activeContext.md")]
+    ordered = [*lead, *(path for path in paths if path not in lead)]
+    for path in ordered:
+        rel = path.relative_to(root)
+        if path in lead or full:
+            print(f"\n=== {rel} ===")
+            print(path.read_text(encoding="utf-8").rstrip() if path.is_file() else "<missing>")
+        elif not path.is_file():
+            print(f"\n=== {rel} ===\n<missing>")
+    if not full:
+        print("\n=== LOAD MANIFEST ===")
+        for path in ordered[len(lead):]:
+            lines = len(path.read_text(encoding="utf-8").splitlines()) if path.is_file() else 0
+            print(f"{path.relative_to(root)}: {lines} lines")
+        print("Use `xcalibre-dev resume --full` to emit every LOAD record.")
+    return 0
+
+
+class Migrator:
+    def __init__(self, root: Path, apply: bool):
+        self.root = root
+        self.dev = root / "dev"
+        self.apply = apply
+        self.replacements: dict[str, str] = {}
+        self.actions: list[str] = []
+
+    def note(self, message: str) -> None:
+        self.actions.append(message)
+        print(("APPLY " if self.apply else "WOULD ") + message)
+
+    def move(self, source: Path, target: Path) -> None:
+        if not source.exists():
+            return
+        if target.exists():
+            raise SystemExit(f"migration conflict: both {source} and {target} exist")
+        self.note(f"move {source.relative_to(self.root)} -> {target.relative_to(self.root)}")
+        self.replacements[str(source.relative_to(self.root))] = str(target.relative_to(self.root))
+        if self.apply:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(source, target)
+
+    def write_new(self, path: Path, content: str) -> None:
+        if path.exists():
+            return
+        self.note(f"create {path.relative_to(self.root)}")
+        if self.apply:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+
+    def core(self) -> None:
+        for old, new in CORE_RENAMES.items():
+            self.move(self.dev / old, self.dev / new)
+
+    @staticmethod
+    def phase_name(name: str) -> str:
+        match = re.match(r"phase(\d+)", name, flags=re.I)
+        return f"phase{match.group(1)}" if match else "unclassified"
+
+    def archives(self) -> None:
+        plans = self.dev / "plans"
+        if plans.is_dir():
+            roadmap = self.dev / "phaseRoadmap.md"
+            roadmap_text = roadmap.read_text(encoding="utf-8") if roadmap.is_file() else ""
+            primary = sorted(
+                (path for path in plans.glob("*.md")
+                 if re.fullmatch(r"phase\d+\.md", path.name, flags=re.I)),
+                key=lambda path: int(re.search(r"\d+", path.name).group()),
+            )
+            promoted = (
+                primary[-1]
+                if primary and not (self.dev / "phaseRoadmap.md").exists()
+                else None
+            )
+            if promoted is not None:
+                self.move(promoted, self.dev / "phaseRoadmap.md")
+            for path in sorted(plans.glob("*.md")):
+                if path == promoted or f"dev/plans/{path.name}" in roadmap_text:
+                    continue
+                if not re.match(r"phase\d+(?:[_.-].*)?\.md$", path.name, flags=re.I):
+                    continue
+                phase = self.phase_name(path.name)
+                self.move(path, self.dev / "archive" / "plans" / phase / path.name)
+            reviews = plans / "reviews"
+            if reviews.is_dir():
+                for path in sorted(reviews.glob("*.md")):
+                    phase = self.phase_name(path.name)
+                    self.move(path, self.dev / "archive" / "reviews" / phase / path.name)
+        for path in sorted(self.dev.glob("phase[0-9]*")):
+            if path.is_dir():
+                self.move(path, self.dev / "archive" / "phases" / path.name)
+        self.write_new(self.dev / "archive" / "README.md", template("archive-README.md"))
+
+    def telemetry(self) -> None:
+        source = self.dev / "baselines.json"
+        target = self.dev / "telemetry" / "benchmarks.csv"
+        if source.exists() and target.exists():
+            raise SystemExit(f"migration conflict: both {source} and {target} exist")
+        if source.exists():
+            self.note(f"convert {source.relative_to(self.root)} -> {target.relative_to(self.root)}")
+            self.replacements[str(source.relative_to(self.root))] = str(target.relative_to(self.root))
+            if self.apply:
+                data = json.loads(source.read_text(encoding="utf-8"))
+                if not isinstance(data, dict) or any(isinstance(v, (dict, list)) for v in data.values()):
+                    raise SystemExit("baselines.json must be a flat object")
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with target.open("w", encoding="utf-8", newline="") as stream:
+                    writer = csv.writer(stream, lineterminator="\n")
+                    writer.writerow(("metric_key", "value"))
+                    for key, value in data.items():
+                        writer.writerow((key, json.dumps(value, ensure_ascii=False)))
+                source.unlink()
+        else:
+            self.write_new(target, "metric_key,value\n")
+        self.write_new(self.dev / "telemetry" / "gate_results.md", template("gate_results.md"))
+
+    def rewrite_references(self) -> None:
+        if not self.replacements:
+            return
+        for path in self.root.rglob("*"):
+            if not path.is_file() or path.suffix.lower() not in TEXT_SUFFIXES:
+                continue
+            rel = path.relative_to(self.root)
+            if any(part in SKIP_PARTS for part in rel.parts):
+                continue
+            try:
+                content = path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                continue
+            changed = content
+            for old, new in sorted(self.replacements.items(), key=lambda item: -len(item[0])):
+                changed = changed.replace(old, new)
+                source = Path(old)
+                if source.suffix:
+                    changed = changed.replace(old.removeprefix("dev/"), new.removeprefix("dev/"))
+            if changed != content:
+                self.note(f"rewrite references in {rel}")
+                if self.apply:
+                    path.write_text(changed, encoding="utf-8")
+
+    def run(self) -> int:
+        if not self.dev.is_dir():
+            raise SystemExit(f"missing dev directory: {self.dev}")
+        self.core()
+        self.archives()
+        self.telemetry()
+        self.write_new(self.dev / "SCHEMA.md", template("SCHEMA.md"))
+        self.write_new(self.dev / "phaseRoadmap.md", template("phaseRoadmap.md"))
+        self.write_new(self.dev / "decisions.md", template("decisions.md"))
+        self.rewrite_references()
+        if not self.actions:
+            print("Context Vault migration: already current")
+        elif not self.apply:
+            print("Dry run only; pass --apply to make these changes.")
+        return 0
+
+
+def parser() -> argparse.ArgumentParser:
+    out = argparse.ArgumentParser(prog="xcalibre-dev")
+    sub = out.add_subparsers(dest="command", required=True)
+    init_parser = sub.add_parser("init")
+    init_parser.add_argument("--feature", default=None)
+    init_parser.add_argument("repository", nargs="?", default=os.getcwd())
+    plan_parser = sub.add_parser("plan")
+    plan_parser.add_argument("milestone")
+    plan_parser.add_argument("slug")
+    plan_parser.add_argument("--feature", default=None)
+    plan_parser.add_argument("repository", nargs="?", default=os.getcwd())
+    resume_parser = sub.add_parser("resume")
+    resume_parser.add_argument("--full", action="store_true")
+    resume_parser.add_argument("--feature", default=None)
+    resume_parser.add_argument("repository", nargs="?", default=os.getcwd())
+    check_parser = sub.add_parser("check")
+    check_parser.add_argument("--feature", default=None)
+    check_parser.add_argument("repository", nargs="?", default=os.getcwd())
+    migrate_parser = sub.add_parser("migrate")
+    migrate_parser.add_argument("--apply", action="store_true")
+    migrate_parser.add_argument("repository", nargs="?", default=os.getcwd())
+    return out
+
+
+def main() -> int:
+    args = parser().parse_args()
+    root = root_path(args.repository)
+    if args.command == "init":
+        return init(root, args.feature)
+    if args.command == "plan":
+        return plan(root, args.milestone, args.slug, args.feature)
+    if args.command == "resume":
+        return resume(root, args.full, args.feature)
+    if args.command == "check":
+        return check(root, feature=args.feature)
+    return Migrator(root, args.apply).run()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

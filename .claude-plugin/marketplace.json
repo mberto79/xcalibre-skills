@@ -1,0 +1,13 @@
+{
+  "name": "xcalibre-skills",
+  "owner": {
+    "name": "Humberto Medina"
+  },
+  "plugins": [
+    {
+      "name": "xcalibre-skills",
+      "source": "./plugins/xcalibre-skills",
+      "description": "Reusable skills for developing, validating and documenting XCALibre.jl workflows."
+    }
+  ]
+}

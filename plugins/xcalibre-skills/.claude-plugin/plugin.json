@@ -1,0 +1,10 @@
+{
+  "name": "xcalibre-skills",
+  "description": "Reusable skills for developing, validating and documenting XCALibre.jl workflows.",
+  "author": {
+    "name": "Humberto Medina",
+    "email": "h.medina@aerofluids.org"
+  },
+  "homepage": "https://github.com/mberto79/xcalibre-skills",
+  "repository": "https://github.com/mberto79/xcalibre-skills"
+}

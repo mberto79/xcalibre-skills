@@ -1,174 +1,125 @@
 # XCALibre Skills
 
-Reusable agent skills for developing, configuring, validating and documenting computational fluid dynamics workflows with XCALibre.jl.
+Reusable agent skills for developing, configuring, validating and documenting computational fluid dynamics workflows with [XCALibre.jl](https://github.com/Multiphysics-Flow-Solvers/XCALibre.jl).
 
-## Status
-
-This repository contains an umbrella XCALibre skill and six specialist skills for XCALibre.jl and Julia development workflows.
-
-The root `SKILL.md` can be installed as a standalone umbrella skill in Claude Code or Codex. Claude marketplace and Codex plugin packaging will be added before the first packaged release.
-
-## Repository structure
-
-```text
-xcalibre-skills/
-|-- SKILL.md
-|-- agents/
-|   `-- openai.yaml
-|-- assets/
-|-- references/
-|-- scripts/
-`-- skills/
-    |-- julia-benchmarking/
-    |-- xcalibre-close/
-    |-- xcalibre-dev/
-    |-- xcalibre-kernels/
-    |-- xcalibre-mesh-types/
-    `-- xcalibre-pr/
-```
-
-- `SKILL.md`: shared, platform-neutral skill instructions.
-- `agents/openai.yaml`: optional OpenAI and Codex interface metadata.
-- `assets/`: templates and other files used in generated outputs.
-- `references/`: technical material loaded only when relevant.
-- `scripts/`: reusable automation where deterministic execution is useful.
-- `skills/`: specialist skills and their supporting resources.
+The repository is packaged as one marketplace plugin for Claude Code and Codex. Both platforms load the same platform-neutral skill sources.
 
 ## Available skills
 
 | Skill | Description and use |
 |---|---|
-| `xcalibre-skills` | Umbrella entry point for the complete collection. Use `/xcalibre-skills` in Claude Code or `$xcalibre-skills` in Codex for general XCALibre.jl work or when the appropriate specialist skill is not known. It selects and loads only the relevant specialist guidance. |
-| `julia-benchmarking` | Provides reliable Julia performance measurement by separating compilation, allocation, data movement and warmed steady-state runtime. Use it when designing or reviewing benchmarks, isolating a representative bottleneck, or comparing CPU and GPU implementations. |
-| `xcalibre-kernels` | Provides XCALibre.jl conventions for fused field loops and `KernelAbstractions.jl` kernels across CPU and GPU backends. Use it when adding, reviewing or refactoring computational kernels and backend-independent field operations. |
-| `xcalibre-mesh-types` | Preserves type stability for `Mesh2`, `Mesh3`, cells, faces and mesh-derived scalar or index values. Use it when code must work correctly with `Float32`, `Float64`, `Int32` and `Int64` mesh configurations. |
-| `xcalibre-dev` | Maintains a persistent context vault for substantial features, phases, refactors and debugging campaigns. Use it when engineering work must remain recoverable and understandable across multiple development sessions. Do not use it for small edits, reviews or general questions. |
-| `xcalibre-close` | Consolidates and cleans the records, examples, documentation and generated evidence at feature or development close. It runs the `xcalibre-pr` preflight checks and reports readiness, but does not commit, push, merge or open a pull request. Invoke `xcalibre-pr` separately for submission. |
-| `xcalibre-pr` | Checks and prepares an XCALibre.jl contribution for submission. Use it to verify branch synchronisation, PR scope, changelog entries, tests, documentation, examples, comment length, dependencies, licences, human authorship and AI disclosure. It lists unresolved items and requires consent before corrective work or submission actions. |
-
-With the standalone installation, invoke the umbrella skill and name the required workflow. Platform-specific packaging will also expose the specialist skills directly as `/skill-name` in Claude Code and `$skill-name` in Codex.
+| `xcalibre-skills` | Umbrella entry point for the collection. Use it for general XCALibre.jl work or when the appropriate specialist skill is not known. It selects and loads only the relevant specialist guidance. |
+| `julia-benchmarking` | Separates compilation, allocation, data movement and warmed steady-state runtime. Use it to design or review Julia benchmarks and compare CPU or GPU implementations. |
+| `xcalibre-kernels` | Applies XCALibre.jl conventions for fused field loops and `KernelAbstractions.jl` kernels. Use it when adding, reviewing or refactoring backend-independent field operations. |
+| `xcalibre-mesh-types` | Preserves type stability for meshes, cells, faces and mesh-derived values. Use it when code must support different floating-point and integer mesh types. |
+| `xcalibre-dev` | Maintains a persistent context vault for substantial features, phases, refactors and debugging campaigns. Use it for work that must remain recoverable across development sessions. |
+| `xcalibre-close` | Consolidates and cleans development records, examples, documentation and generated evidence at feature close. It runs the `xcalibre-pr` preflight checks but does not submit a pull request. |
+| `xcalibre-pr` | Checks and prepares an XCALibre.jl contribution for submission. It checks branch synchronisation, scope, changelog entries, tests, documentation, examples, comments, dependencies, licences, authorship and AI disclosure. Corrective and submission actions require user consent. |
 
 ## Install in Claude Code
 
-Claude Code loads personal skills from `~/.claude/skills/` and project skills from `.claude/skills/`.
+Add the GitHub repository as a marketplace:
 
-### Personal installation
-
-Repository URL: `https://github.com/mberto79/xcalibre-skills.git`
-
-macOS and Linux:
-
-```bash
-mkdir -p ~/.claude/skills
-git clone https://github.com/mberto79/xcalibre-skills.git ~/.claude/skills/xcalibre-skills
+```text
+/plugin marketplace add mberto79/xcalibre-skills
 ```
 
-Windows PowerShell:
+Install the plugin:
 
-```powershell
-New-Item -ItemType Directory -Force "$HOME\.claude\skills" | Out-Null
-git clone https://github.com/mberto79/xcalibre-skills.git "$HOME\.claude\skills\xcalibre-skills"
+```text
+/plugin install xcalibre-skills@xcalibre-skills
 ```
 
-Restart Claude Code if the skill does not appear immediately. Confirm installation with `/skills`, then invoke the skill with `/xcalibre-skills`.
+Claude Code namespaces plugin skills with the plugin name. Examples:
 
-### Project installation
-
-To make the skill available only within an XCALibre.jl checkout, clone it into the project-level skill directory:
-
-```bash
-cd /path/to/XCALibre.jl
-mkdir -p .claude/skills
-git clone https://github.com/mberto79/xcalibre-skills.git .claude/skills/xcalibre-skills
+```text
+/xcalibre-skills:xcalibre-pr check this branch for PR readiness
+/xcalibre-skills:xcalibre-kernels review this kernel
 ```
 
-For a team-managed XCALibre.jl repository, use a Git submodule instead of committing a nested clone:
-
-```bash
-git submodule add https://github.com/mberto79/xcalibre-skills.git .claude/skills/xcalibre-skills
-```
-
-See the official [Claude Code skills documentation](https://code.claude.com/docs/en/skills) for skill scopes and discovery behaviour.
+Use `/plugin` to inspect installed plugins and marketplace updates.
 
 ## Install in Codex
 
-Codex loads personal skills from `~/.agents/skills/` and repository skills from `.agents/skills/`.
-
-### Personal installation
-
-macOS and Linux:
+Add the GitHub repository as a marketplace:
 
 ```bash
-mkdir -p ~/.agents/skills
-git clone https://github.com/mberto79/xcalibre-skills.git ~/.agents/skills/xcalibre-skills
+codex plugin marketplace add mberto79/xcalibre-skills --ref main
 ```
 
-Windows PowerShell:
-
-```powershell
-New-Item -ItemType Directory -Force "$HOME\.agents\skills" | Out-Null
-git clone https://github.com/mberto79/xcalibre-skills.git "$HOME\.agents\skills\xcalibre-skills"
-```
-
-Restart Codex if the skill does not appear immediately. Invoke it explicitly with `$xcalibre-skills`, or allow Codex to select it automatically for matching XCALibre.jl tasks.
-
-### Project installation
-
-To make the skill available only within an XCALibre.jl checkout:
+Install the plugin:
 
 ```bash
-cd /path/to/XCALibre.jl
-mkdir -p .agents/skills
-git clone https://github.com/mberto79/xcalibre-skills.git .agents/skills/xcalibre-skills
+codex plugin add xcalibre-skills@xcalibre-skills
 ```
 
-For a team-managed repository:
-
-```bash
-git submodule add https://github.com/mberto79/xcalibre-skills.git .agents/skills/xcalibre-skills
-```
-
-See the [official OpenAI skill documentation](https://developers.openai.com/codex/skills) for Codex skill locations and discovery behaviour.
-
-## Use with XCALibre.jl
-
-1. Install the skill at personal or project scope.
-2. Open the XCALibre.jl checkout as the working project.
-3. Invoke the skill explicitly when required.
-
-Claude Code:
+Restart Codex if the new skills do not appear immediately. Invoke a skill explicitly or allow Codex to select it for a matching task:
 
 ```text
-/xcalibre-skills inspect this XCALibre.jl case and explain the solver configuration.
+$xcalibre-pr check this branch for PR readiness
+$xcalibre-kernels review this kernel
 ```
 
-Codex:
+## Development installation
+
+Clone the repository only when editing or validating the skill collection locally:
+
+```bash
+git clone https://github.com/mberto79/xcalibre-skills.git
+cd xcalibre-skills
+```
+
+Claude Code can add the local checkout through `/plugin marketplace add /path/to/xcalibre-skills`. Codex can add it from the repository root with:
+
+```bash
+codex plugin marketplace add .
+codex plugin add xcalibre-skills@xcalibre-skills
+```
+
+## Repository structure
 
 ```text
-$xcalibre-skills inspect this XCALibre.jl case and explain the solver configuration.
+xcalibre-skills/
+|-- .agents/
+|   `-- plugins/
+|       `-- marketplace.json
+|-- .claude-plugin/
+|   `-- marketplace.json
+|-- plugins/
+|   `-- xcalibre-skills/
+|       |-- .claude-plugin/
+|       |   `-- plugin.json
+|       |-- .codex-plugin/
+|       |   `-- plugin.json
+|       `-- skills/
+|           |-- xcalibre-skills/
+|           |-- julia-benchmarking/
+|           |-- xcalibre-close/
+|           |-- xcalibre-dev/
+|           |-- xcalibre-kernels/
+|           |-- xcalibre-mesh-types/
+|           `-- xcalibre-pr/
+`-- README.md
 ```
 
-## Update an installation
+- `.claude-plugin/marketplace.json` is the Claude Code marketplace catalogue.
+- `.agents/plugins/marketplace.json` is the Codex marketplace catalogue.
+- `plugins/xcalibre-skills/` is the shared plugin payload.
+- Each directory under `plugins/xcalibre-skills/skills/` is an independently selectable skill.
 
-Run `git pull` inside the installed `xcalibre-skills` directory. Restart the host application if it does not detect the changes automatically.
+A `src/` directory is not required. These packages are declarative skills rather than a compiled library, and both plugin formats expect their distributable skill content inside the plugin directory.
 
 ## Development principles
 
-- Keep shared routing and essential constraints in `SKILL.md`.
-- Keep detailed technical guidance in focused files under `references/`.
-- Add scripts only when repeatable automation improves correctness or reliability.
-- Keep each specialist skill focused on one identifiable XCALibre.jl or Julia development workflow.
+- Keep shared routing and essential constraints in the umbrella skill.
+- Keep each specialist skill focused on one identifiable workflow.
+- Keep detailed guidance and deterministic scripts with the specialist skill that uses them.
 - Validate technical claims against the relevant XCALibre.jl source and documentation.
-- Keep one neutral source tree under `skills/`; generate or package platform-specific layouts from that source rather than maintaining divergent Claude and Codex copies.
+- Maintain one canonical skill tree for Claude Code and Codex.
+- Commit marketplace-ready changes under the human contributor's identity.
 
-## Claude marketplace release
+## Platform documentation
 
-The marketplace release will add:
-
-```text
-.claude-plugin/marketplace.json
-plugins/xcalibre-skills/.claude-plugin/plugin.json
-plugins/xcalibre-skills/skills/
-```
-
-The final marketplace installation command will be documented after the marketplace manifests are added and validated.
+- [Claude Code plugin marketplaces](https://code.claude.com/docs/en/plugin-marketplaces)
+- [Claude Code plugin discovery and installation](https://code.claude.com/docs/en/discover-plugins)
+- [Codex skills](https://developers.openai.com/codex/skills)
