@@ -1,0 +1,4 @@
+interface:
+  display_name: "XCALibre Skills"
+  short_description: "Workflows for XCALibre.jl CFD and aerodynamics"
+  default_prompt: "Use $xcalibre-skills to help with this XCALibre.jl task."
