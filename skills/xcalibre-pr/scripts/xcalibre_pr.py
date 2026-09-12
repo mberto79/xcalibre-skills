@@ -228,21 +228,33 @@ def pull_request_description(
     repository: str | None,
     number: int | None,
     description_file: str | None,
-) -> tuple[str, str] | None:
+) -> tuple[str, str, str | None] | None:
+    if number is not None:
+        target = repository or github_repository(git(root, "remote", "get-url", remote))
+        response = github_json(target, f"pulls/{number}")
+        if not isinstance(response, dict):
+            raise RuntimeError("Unexpected GitHub pull-request response")
+        user = response.get("user")
+        author = user.get("login") if isinstance(user, dict) else None
+        return f"{target}#{number}", str(response.get("body") or "").strip(), str(author or "")
     if description_file:
         path = Path(description_file)
         if not path.is_absolute():
             path = root / path
         if not path.is_file():
             raise RuntimeError(f"PR description file not found: {path}")
-        return str(path), path.read_text(encoding="utf-8").strip()
-    if number is None:
-        return None
-    target = repository or github_repository(git(root, "remote", "get-url", remote))
-    response = github_json(target, f"pulls/{number}")
-    if not isinstance(response, dict):
-        raise RuntimeError("Unexpected GitHub pull-request response")
-    return f"{target}#{number}", str(response.get("body") or "").strip()
+        return str(path), path.read_text(encoding="utf-8").strip(), None
+    return None
+
+
+def authenticated_github_user(root: Path) -> str | None:
+    response = command(["gh", "api", "user", "--jq", ".login"], root)
+    return response.stdout.strip() if response.returncode == 0 and response.stdout.strip() else None
+
+
+def ai_disclosure(body: str) -> str | None:
+    match = re.search(r"(?im)^\s*(?:[-*]\s*)?AI assistance:\s*(\S.*)\s*$", body)
+    return match.group(1).strip() if match else None
 
 
 def changelog_lines(path: Path, number: int) -> list[tuple[int, str]]:
@@ -281,7 +293,7 @@ def preflight(arguments: argparse.Namespace) -> int:
     confirmed = set(arguments.confirm)
     if "all" in confirmed:
         confirmed.update(
-            {"theme", "description", "documentation", "example", "docstrings", "dependencies", "propagation", "grids"}
+            {"theme", "description", "documentation", "example", "docstrings", "dependencies", "propagation", "grids", "identity"}
         )
 
     def record(label: str, status: str, detail: str) -> None:
@@ -399,6 +411,8 @@ def preflight(arguments: argparse.Namespace) -> int:
             else:
                 record("Changelog", "FAIL", f"no item references #{number}")
 
+    description_body = ""
+    pr_author: str | None = None
     try:
         description = pull_request_description(
             root,
@@ -412,6 +426,8 @@ def preflight(arguments: argparse.Namespace) -> int:
         elif not description[1]:
             record("PR description", "FAIL", f"empty description at {description[0]}")
         else:
+            description_body = description[1]
+            pr_author = description[2]
             review(
                 "description",
                 "PR description",
@@ -419,6 +435,52 @@ def preflight(arguments: argparse.Namespace) -> int:
             )
     except RuntimeError as error:
         record("PR description", "FAIL", str(error))
+
+    if not arguments.expected_author:
+        record("PR author", "FAIL", "provide the contributor's GitHub login with --expected-author")
+    elif actual_number is not None:
+        if not pr_author:
+            record("PR author", "FAIL", "could not read the pull-request author from GitHub")
+        elif pr_author.casefold() == arguments.expected_author.casefold():
+            record("PR author", "PASS", f"opened by {pr_author}")
+        else:
+            record(
+                "PR author",
+                "FAIL",
+                f"opened by {pr_author}; expected the user's account {arguments.expected_author}",
+            )
+    else:
+        authenticated = authenticated_github_user(root)
+        if authenticated and authenticated.casefold() == arguments.expected_author.casefold():
+            record("GitHub identity", "PASS", f"authenticated as {authenticated}")
+        elif authenticated:
+            record(
+                "GitHub identity",
+                "FAIL",
+                f"authenticated as {authenticated}; expected {arguments.expected_author}",
+            )
+        else:
+            review(
+                "identity",
+                "GitHub identity",
+                f"confirm the PR will be opened by the user's account {arguments.expected_author}",
+            )
+
+    if not arguments.ai_vendor or not arguments.ai_model:
+        record("AI disclosure", "FAIL", "provide both --ai-vendor and --ai-model")
+    elif not description_body:
+        record("AI disclosure", "FAIL", "a PR description is required before disclosure can be checked")
+    else:
+        disclosure = ai_disclosure(description_body)
+        expected = f"AI assistance: {arguments.ai_vendor}, {arguments.ai_model}."
+        if (
+            disclosure
+            and arguments.ai_vendor.casefold() in disclosure.casefold()
+            and arguments.ai_model.casefold() in disclosure.casefold()
+        ):
+            record("AI disclosure", "PASS", expected)
+        else:
+            record("AI disclosure", "FAIL", f"add this one-line note to the PR description: {expected}")
 
     if arguments.feature:
         test_paths = [path for path in files if Path(path).parts[0].lower() in {"test", "tests"}]
@@ -544,13 +606,16 @@ def parser() -> argparse.ArgumentParser:
     check.add_argument("--no-fetch", action="store_true", help="use existing remote-tracking refs")
     check.add_argument("--pr-number", type=int, help="actual assigned pull-request number")
     check.add_argument("--description-file", help="draft PR description relative to the repository")
+    check.add_argument("--expected-author", help="GitHub login of the human contributor")
+    check.add_argument("--ai-vendor", help="AI vendor disclosed in the PR description")
+    check.add_argument("--ai-model", help="AI model disclosed in the PR description")
     check.add_argument("--changelog", default="CHANGELOG.md")
     check.add_argument("--feature", action="store_true", help="require changed tests and documentation")
     check.add_argument(
         "--confirm",
         action="append",
         default=[],
-        choices=("theme", "description", "documentation", "example", "docstrings", "dependencies", "propagation", "grids", "all"),
+        choices=("theme", "description", "documentation", "example", "docstrings", "dependencies", "propagation", "grids", "identity", "all"),
         help="record a completed judgement-based review; repeat as needed",
     )
     check.add_argument("--skip-tests", action="store_true", help="skip the local Julia package test")

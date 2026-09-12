@@ -1,6 +1,6 @@
 ---
 name: xcalibre-close
-description: Close a phase or feature and merge it to the trunk. Use when the user says close the phase, wrap up, tidy up before merging, merge back to main, archive this feature, or ships a phase's last step. Consolidates the dev record into one durable folder, updates the project-wide architecture and plan, purges decision-ID and narration comments, turns test-harness examples into real user-facing examples, deletes generated evidence, trims the spec to what shipped, gates, commits and merges. Language- and project-agnostic; the build loop it closes is the `xcalibre-dev` skill.
+description: Close a phase or feature and prepare it for pull-request submission. Use when the user says close the phase, wrap up, tidy up before merging, archive this feature, or ships a phase's last step. Consolidates the development record, cleans shipped material, runs the close gate, and hands the result to `xcalibre-pr`; it does not commit or open the pull request.
 ---
 
 # Phase / feature close
@@ -13,8 +13,10 @@ none of that context. Closing is therefore mostly DELETION, and the test for eve
 Two things are never deleted: the shipped code, and the record of what was TRIED AND FAILED — the
 only artifact that stops the next phase repeating a dead end.
 
+Before handoff, read `../xcalibre-pr/SKILL.md`, run its preflight checks, and report any open items. This close skill must not commit or open the pull request; when the checks pass, tell the user to invoke `xcalibre-pr` separately for submission.
+
 **Phase close** (one phase ends, the project continues) and **feature close** (development stops)
-run the same steps; only step 7's merge target differs.
+run the same steps.
 
 ## 0. Preconditions — refuse to close on a soft floor
 Working tree clean, `STATE: IDLE`, no open item in `dev/phaseRoadmap.md`, no `## blocked`, and the
@@ -106,20 +108,16 @@ revisions. Rewrite `dev/telemetry/benchmarks.csv` from the closing gate, keyed b
 ## 6. Sync the skills
 Both skills exist in four locations that drift (`~/.claude/`, `~/.codex/`, `<repo>/.claude/`,
 `<repo>/.codex/`). Run `bash <xcalibre-dev-dir>/scripts/sync_skills.sh <repo>` and include the
-project copies in the close commit, so the repo ships the workflow it was built under.
+project copies in the handoff, so `xcalibre-pr` can include the workflow in its commit.
 
-## 7. Gate, commit, merge
+## 7. Gate and hand off
 - **Run the full gate again, cold.** The cleanup touched comments, examples and specs; a green
   before it is not a green after it.
-- Commit the whole close as ONE commit — it is a single reconciliation, and splitting it leaves the
-  repo describing two states at once. State plainly in the message that behaviour is unchanged and
-  that every source edit is a comment or a docstring, if that is true.
-- **Merge into the trunk** (`BRANCH:`), `--no-ff`, then push per `PUSH:`. Report what the close
-  deleted, what it kept, and the gate result BEFORE merging. After merging, verify the trunk tree is
-  what you gated (`git diff --stat <branch> <trunk>` empty) and that nothing stale survived the
-  merge from the trunk's own older history.
+- Run the `xcalibre-pr` preflight checks and report every open item.
+- Do not commit, push, merge, or open a pull request. When the checks pass, tell the user to invoke
+  `xcalibre-pr` separately to commit and open the pull request.
 
 ## Close report
 Verdict first, then: the gate result, what `dev/archive/phases/<slug>/` contains, the counts (files deleted,
 comment lines removed, examples rewritten), anything deliberately kept that looked deletable, and
-the merge command run or awaiting approval. No essay.
+the pull-request preflight result and remaining open items. No essay.

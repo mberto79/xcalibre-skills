@@ -20,6 +20,8 @@ Prepare a focused, current, tested pull request that follows XCALibre.jl contrib
 9. Permit docstrings only for user-level API functions. Use comments for internal implementation details and keep every comment block to no more than three lines.
 10. When a dependency is added, require the pull-request description to list it and state its licence explicitly.
 11. When a common or base function changes, inspect its callers and propagate the change through every affected part of the codebase, including tests and documentation.
+12. Open the pull request through the human contributor's authenticated GitHub account. Never use an agent or bot identity as the pull-request author. Pass the contributor's GitHub login with `--expected-author`, then verify the assigned pull request reports that login as its author.
+13. Add a short final line to the pull-request description in the form `AI assistance: <vendor>, <model>.` Pass the same values with `--ai-vendor` and `--ai-model`. Use the actual vendor and model reported by the host; do not guess. This disclosure does not make the AI an author or co-author.
 
 Use `python scripts/xcalibre_pr.py next-number --repository <checkout>` when a provisional number is needed. Re-run preflight with `--pr-number <actual-number>` after GitHub assigns the pull-request number. Record completed semantic reviews by repeating `--confirm <review>`, using the review names reported by `--help`.
 
