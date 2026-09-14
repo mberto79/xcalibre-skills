@@ -1,6 +1,6 @@
 ---
 name: xcalibre-close
-description: Close a phase or feature and prepare it for pull-request submission. Use when the user says close the phase, wrap up, tidy up before merging, archive this feature, or ships a phase's last step. Consolidates the development record, cleans shipped material, runs the close gate, and hands the result to `xcalibre-pr`; it does not commit or open the pull request.
+description: Close a phase or feature and prepare it for pull-request submission. Direct invocation only — do not select automatically; use when the user explicitly says close the phase, wrap up, tidy up before merging, archive this feature, or ships a phase's last step. Consolidates the development record, cleans shipped material, runs the close gate, and hands the result to `xcalibre-pr`; it does not commit or open the pull request.
 ---
 
 # Phase / feature close

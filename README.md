@@ -8,13 +8,16 @@ The repository is packaged as one marketplace plugin for Claude Code and Codex. 
 
 | Skill | Description and use |
 |---|---|
-| `xcalibre-skills` | Umbrella entry point for the collection. Use it for general XCALibre.jl work or when the appropriate specialist skill is not known. It selects and loads only the relevant specialist guidance. |
+| `xcalibre-skills` | Umbrella entry point for the collection. Use it for general XCALibre.jl work or when the appropriate specialist skill is not known. It selects and loads only the relevant specialist guidance, and never auto-invokes the direct-invocation skills below. |
 | `julia-benchmarking` | Separates compilation, allocation, data movement and warmed steady-state runtime. Use it to design or review Julia benchmarks and compare CPU or GPU implementations. |
 | `xcalibre-kernels` | Applies XCALibre.jl conventions for fused field loops and `KernelAbstractions.jl` kernels. Use it when adding, reviewing or refactoring backend-independent field operations. |
 | `xcalibre-mesh-types` | Preserves type stability for meshes, cells, faces and mesh-derived values. Use it when code must support different floating-point and integer mesh types. |
-| `xcalibre-dev` | Maintains a persistent context vault for substantial features, phases, refactors and debugging campaigns. Use it for work that must remain recoverable across development sessions. |
-| `xcalibre-close` | Consolidates and cleans development records, examples, documentation and generated evidence at feature close. It runs the `xcalibre-pr` preflight checks but does not submit a pull request. |
-| `xcalibre-pr` | Checks and prepares an XCALibre.jl contribution for submission. It checks branch synchronisation, scope, changelog entries, tests, documentation, examples, comments, dependencies, licences, authorship and AI disclosure. Corrective and submission actions require user consent. |
+| `xcalibre-dev` *(direct invocation only)* | Maintains a persistent context vault for substantial features, phases, refactors and debugging campaigns, recoverable across sessions. Operations: `init [--feature <slug>]`, `plan <milestone-id> <slug>`, `resume [--full]`, `check`, `migrate [--apply]`. |
+| `xcalibre-close` *(direct invocation only)* | Consolidates and cleans development records, examples, documentation and generated evidence at phase or feature close. Runs the `xcalibre-pr` preflight checks but does not submit a pull request. |
+| `xcalibre-pr` *(direct invocation only)* | Checks and prepares an XCALibre.jl contribution for submission: branch synchronisation, scope, changelog entries, tests, documentation, examples, comments, dependencies, licences, authorship and AI disclosure. Operations: `preflight [--pr-number <n>] [--confirm <review>]`, `next-number`. Corrective and submission actions require user consent. |
+| `xcalibre-review` *(direct invocation only)* | AI review of an XCALibre.jl pull request or diff. Gates on single-theme scope (via `xcalibre-pr`'s preflight) before reviewing correctness, style, and GPU/`KernelAbstractions.jl` compatibility. Call syntax: `xcalibre-review [target] [level] [--comment] [--fix]`, matching `code-review`. Marks output as AI-generated; a human performs the final review and merge. |
+
+Skills marked *(direct invocation only)* are never selected automatically by `xcalibre-skills` or the agent — invoke them explicitly by name.
 
 ## Install in Claude Code
 
@@ -119,7 +122,8 @@ xcalibre-skills/
 |           |-- xcalibre-dev/
 |           |-- xcalibre-kernels/
 |           |-- xcalibre-mesh-types/
-|           `-- xcalibre-pr/
+|           |-- xcalibre-pr/
+|           `-- xcalibre-review/
 `-- README.md
 ```
 

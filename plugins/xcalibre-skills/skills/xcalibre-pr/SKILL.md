@@ -1,6 +1,6 @@
 ---
 name: xcalibre-pr
-description: Prepare and verify pull requests against XCALibre.jl project expectations. Use when checking, preparing, or submitting an XCALibre.jl pull request.
+description: Prepare and verify pull requests against XCALibre.jl project expectations. Direct invocation only — do not select automatically; use when the user explicitly runs xcalibre-pr or asks to check, prepare, or submit a specific XCALibre.jl pull request.
 ---
 
 # XCALibre Pull Requests

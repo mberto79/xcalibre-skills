@@ -20,11 +20,8 @@ When a task matches a specialised sibling skill, read that skill's `SKILL.md` an
 - `../julia-benchmarking/`: isolate and measure Julia performance accurately.
 - `../xcalibre-kernels/`: write and review idiomatic XCALibre.jl CPU and GPU kernels.
 - `../xcalibre-mesh-types/`: preserve numeric and index type stability in mesh code.
-- `../xcalibre-pr/`: check, prepare, and submit XCALibre.jl pull requests.
-- `../xcalibre-dev/`: maintain a persistent context vault for substantial development work.
-- `../xcalibre-close/`: close and archive work managed through `xcalibre-dev`.
 
-Treat `xcalibre-dev` and `xcalibre-close` as development workflow skills. Apply their repository-changing and Git operations only when the user has authorised the corresponding changes.
+`../xcalibre-dev/`, `../xcalibre-close/`, `../xcalibre-pr/` and `../xcalibre-review/` are direct-invocation workflow skills. Never select them automatically from this umbrella; use one only when the user explicitly invokes it by name or unambiguously asks for that exact workflow (opening/resuming a development vault, closing a phase or feature, preparing/submitting a pull request, or reviewing one). Apply their repository-changing, Git, and posting operations only when the user has authorised the corresponding changes.
 
 ## Resources
 

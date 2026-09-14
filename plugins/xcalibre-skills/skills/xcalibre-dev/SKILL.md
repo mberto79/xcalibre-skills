@@ -1,6 +1,6 @@
 ---
 name: xcalibre-dev
-description: Declarative context vault for substantive engineering work that must survive sessions. Use for features, phases, refactors, and debugging campaigns larger than a one-off fix; not for questions, reviews, or trivial edits.
+description: Declarative context vault for substantive engineering work that must survive sessions. Use for features, phases, refactors, and debugging campaigns larger than a one-off fix; not for questions, reviews, or trivial edits. Direct invocation only — do not select automatically.
 ---
 
 # Context Vault protocol
