@@ -56,4 +56,4 @@ Boundary condition methods should expose the mesh scalar and index types in the 
 end
 ```
 
-This keeps Float32 meshes from accidentally returning Float64 coefficients when a boundary definition uses numeric literals.
+This stops Float32 meshes accidentally returning Float64 coefficients when a boundary definition uses numeric literals.

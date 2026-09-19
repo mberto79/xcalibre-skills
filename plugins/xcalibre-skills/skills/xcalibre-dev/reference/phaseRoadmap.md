@@ -4,7 +4,7 @@ phase: P1 - <phase title>
 
 ## Outcome
 
-What this phase delivers, in the product's terms. Requirements it serves are named by ID and their content is not restated from `dev/spec.md`.
+What this phase delivers, in the product's terms. Requirements it serves are named by ID, their content not restated from `dev/spec.md`.
 
 ## Ordered work
 

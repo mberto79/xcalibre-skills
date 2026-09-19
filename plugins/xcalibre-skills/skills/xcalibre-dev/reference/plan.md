@@ -16,7 +16,7 @@ The local configurations this milestone must hold on, as a product of named para
 
 ## Steps
 
-Steps are `P1-M1-S<j>`, allocated in order and never renumbered. Same state markers as a milestone: a step closed without delivering keeps its line and names where the work went. Each row states its mechanism, its cost and its verdict BEFORE it is built.
+Steps are `P1-M1-S<j>`, allocated in order and never renumbered. Same state markers as a milestone: a step closed without delivering keeps its line and names where the work went. Each row states its mechanism, cost and verdict BEFORE it is built.
 
 - [ ] **P1-M1-S1** <what it changes> - mechanism: <the invariant it follows from> - cost: <per unit of work> - verdict: <what would accept or refuse it>.
 - [ ] **P1-M1-S2** <what it changes> - mechanism: <...> - cost: <...> - verdict: <...>.

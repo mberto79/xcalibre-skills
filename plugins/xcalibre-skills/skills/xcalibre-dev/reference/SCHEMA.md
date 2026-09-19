@@ -16,6 +16,8 @@
 | `dev/features/<slug>/` | One feature's own vault, same records | Same budgets | Read / Write |
 | `dev/archive/*` | Historical, non-authoritative records | Unlimited | Read-only |
 
+`dev/` is its own Git repository with a private remote, excluded from the project through `.git/info/exclude`: no vault file enters a project commit or pull request.
+
 IDs are allocated and never renumbered: position is order, the ID is identity. A milestone or step closed without delivering keeps its line and names where the work went.
 
 Only one `phaseRoadmap.md` is live. At phase close it moves to `dev/archive/phases/<phase>/roadmap.md`, then resets for the next phase or records no active phase. Each live milestone plan is linked from that roadmap and moves, under the same name, to `dev/archive/plans/<phase>/` when its milestone closes.

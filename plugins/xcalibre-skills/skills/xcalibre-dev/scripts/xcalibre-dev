@@ -113,6 +113,149 @@ def run_git(root: Path, *args: str) -> str:
     ).stdout.rstrip()
 
 
+EXCLUDE_RULE = "/dev/"
+
+
+def exclude_file(root: Path) -> Path:
+    """This clone's private ignore file; unlike `.gitignore` it is never committed."""
+    common = run_git(root, "rev-parse", "--git-common-dir")
+    base = Path(common) if Path(common).is_absolute() else root / common
+    return base / "info" / "exclude"
+
+
+def exclude_vault(root: Path) -> str:
+    """Keep the vault out of every commit and pull request without touching `.gitignore`."""
+    path = exclude_file(root)
+    lines = path.read_text(encoding="utf-8").splitlines() if path.is_file() else []
+    if EXCLUDE_RULE in (line.strip() for line in lines):
+        return f"kept    {EXCLUDE_RULE} in {path}"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as out:
+        if lines and lines[-1].strip():
+            out.write("\n")
+        out.write(f"# xcalibre-dev context vault: local only\n{EXCLUDE_RULE}\n")
+    return f"added   {EXCLUDE_RULE} to {path}"
+
+
+def tracked_vault_files(root: Path) -> list[str]:
+    output = run_git(root, "ls-files", "--", "dev")
+    return [line for line in output.splitlines() if line]
+
+
+def run(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(args, cwd=cwd, text=True, stdout=subprocess.PIPE,
+                          stderr=subprocess.STDOUT, check=False)
+
+
+def vault_repo(top: Path) -> None:
+    """Make `dev/` its own Git repository, so the vault keeps history the project never sees."""
+    if (top / ".git").exists():
+        return
+    run(["git", "init", "-q"], top)
+    run(["git", "add", "-A"], top)
+    made = run(["git", "commit", "-q", "-m", "Initialise development vault"], top)
+    print(f"created vault repository {top}" + (f" (first commit failed: {made.stdout.strip()})"
+                                                 if made.returncode else ""))
+
+
+def gh_ready(cwd: Path) -> bool:
+    return shutil.which("gh") is not None and run(["gh", "auth", "status"], cwd).returncode == 0
+
+
+def remote_slug(root: Path, name: str | None, owner: str | None) -> str:
+    if not gh_ready(root):
+        raise SystemExit("`gh` is missing or not logged in: run `doctor`, then `gh auth login`")
+    owner = owner or run(["gh", "api", "user", "--jq", ".login"], root).stdout.strip()
+    origin = run_git(root, "remote", "get-url", "origin")
+    project = re.split(r"[/:]", origin.rstrip("/"))[-1] if origin.strip() and "fatal" not in origin else root.name
+    project = project.removesuffix(".git").removesuffix(".jl")
+    return f"{owner}/{name or project + '-dev-vault'}"
+
+
+def remote_exists(root: Path, slug: str) -> bool:
+    return run(["gh", "repo", "view", slug, "--json", "name"], root).returncode == 0
+
+
+def connect_remote(top: Path, slug: str) -> None:
+    """Attach the vault to its private GitHub repository, creating it when absent."""
+    if run(["git", "remote", "get-url", "origin"], top).returncode == 0:
+        print(f"kept    vault remote {run(['git', 'remote', 'get-url', 'origin'], top).stdout.strip()}")
+        return
+    if remote_exists(top, slug):
+        field = "sshUrl" if run(["gh", "config", "get", "git_protocol"], top).stdout.strip() == "ssh" else "url"
+        url = run(["gh", "repo", "view", slug, "--json", field, "--jq", "." + field], top).stdout.strip()
+        run(["git", "remote", "add", "origin", url], top)
+        print(f"linked  vault to existing {slug}; reconcile with "
+              "`git -C dev pull --allow-unrelated-histories origin HEAD`")
+        return
+    made = run(["gh", "repo", "create", slug, "--private", "--source", ".", "--remote", "origin",
+                "--push"], top)
+    if made.returncode:
+        raise SystemExit(f"could not create {slug}: {made.stdout.strip()}")
+    print(f"created private vault repository {slug}")
+
+
+def vault_status(top: Path) -> str:
+    if not (top / ".git").exists():
+        return "not a repository - run `init`"
+    dirty = len([line for line in run(["git", "status", "--porcelain"], top).stdout.splitlines() if line])
+    ahead = run(["git", "rev-list", "--count", "@{upstream}..HEAD"], top).stdout.strip()
+    pushed = f"{ahead} unpushed" if ahead.isdigit() else "no remote"
+    return f"{dirty} uncommitted, {pushed} - `sync` records them"
+
+
+def sync(root: Path, message: str) -> int:
+    """Commit every vault change and push it to the vault's own remote."""
+    top = root / "dev"
+    if not (top / ".git").exists():
+        raise SystemExit("dev/ is not a vault repository: run `init`")
+    run(["git", "add", "-A"], top)
+    if run(["git", "diff", "--cached", "--quiet"], top).returncode:
+        run(["git", "commit", "-q", "-m", message], top)
+        print(f"committed vault: {message}")
+    else:
+        print("vault: nothing to commit")
+    if run(["git", "remote", "get-url", "origin"], top).returncode:
+        print("vault: no remote - `init --remote` creates a private one")
+        return 0
+    has_upstream = run(["git", "rev-parse", "@{upstream}"], top).returncode == 0
+    pushed = run(["git", "push", "-q"] if has_upstream else ["git", "push", "-q", "-u", "origin", "HEAD"], top)
+    if pushed.returncode:
+        print(f"vault push failed: {pushed.stdout.strip()}")
+        return 1
+    print("vault pushed")
+    return 0
+
+
+INSTALL = {
+    "linux": {"git": "sudo apt install git", "gh": "sudo apt install gh",
+              "python3": "sudo apt install python3", "julia": "curl -fsSL https://install.julialang.org | sh"},
+    "darwin": {"git": "brew install git", "gh": "brew install gh",
+               "python3": "brew install python", "julia": "curl -fsSL https://install.julialang.org | sh"},
+    "win32": {"git": "winget install --id Git.Git", "gh": "winget install --id GitHub.cli",
+              "python3": "winget install --id Python.Python.3.12", "julia": "winget install --id 9NJNWW8PVKMN"},
+}
+
+
+def doctor() -> int:
+    """Report the tools the workflow skills need, and how to install what is missing."""
+    hints = INSTALL.get(sys.platform, INSTALL["linux"])
+    missing = 0
+    python_ok = sys.version_info >= (3, 9)
+    print(f"[{'ok' if python_ok else 'missing'}] python3 >= 3.9 ({sys.version.split()[0]})")
+    missing += not python_ok
+    for tool, use in (("git", "required"), ("gh", "vault remote and pull requests"),
+                      ("julia", "package tests in xcalibre-pr")):
+        found = shutil.which(tool) is not None
+        print(f"[{'ok' if found else 'missing'}] {tool} - {use}" + ("" if found else f": {hints[tool]}"))
+        missing += not found
+    if shutil.which("gh"):
+        authed = run(["gh", "auth", "status"], Path.cwd()).returncode == 0
+        print(f"[{'ok' if authed else 'missing'}] gh login" + ("" if authed else ": gh auth login"))
+        missing += not authed
+    return 1 if missing else 0
+
+
 def parse_header(path: Path) -> dict[str, str]:
     found: dict[str, str] = {}
     if not path.is_file():
@@ -524,6 +667,10 @@ def check(root: Path, quiet: bool = False, feature: str | None = None) -> int:
     for dev in targets:
         errors.extend(vault_errors(root, dev))
     errors.extend(comment_errors(root))
+    tracked = tracked_vault_files(root)
+    if tracked:
+        errors.append(f"{len(tracked)} vault file(s) tracked by Git; the vault is local only - "
+                      "run `git rm -r --cached dev` and `init` to exclude it")
     if not quiet:
         if errors:
             print("Context Vault: INVALID")
@@ -535,16 +682,22 @@ def check(root: Path, quiet: bool = False, feature: str | None = None) -> int:
     return 1 if errors else 0
 
 
-def init(root: Path, feature: str | None = None) -> int:
+def init(root: Path, feature: str | None = None, remote: bool = False,
+         name: str | None = None, owner: str | None = None) -> int:
     """Scaffold a vault from the skill's own reference forms. Never overwrites a record.
 
     With `feature`, the vault is that FEATURE's own: its spec states what the FEATURE must be true
     of, its roadmap is the technical roadmap for building it. It is placed beside the project's
     vault when one exists, and IS the project's vault when none does.
     """
+    top = root / "dev"
+    slug = remote_slug(root, name, owner) if remote else None
+    if slug and not top.exists() and remote_exists(root, slug):
+        run(["gh", "repo", "clone", slug, str(top)], root)
+        print(f"cloned  vault from {slug}")
     dev = vault(root, feature)
-    if feature and not (root / "dev" / "spec.md").is_file():
-        dev = root / "dev"
+    if feature and not (top / "spec.md").is_file():
+        dev = top
     here = label(root, dev)
     made, kept = [], []
     for name in ("", "plans", "telemetry", "scripts", "archive", "archive/phases",
@@ -579,6 +732,14 @@ def init(root: Path, feature: str | None = None) -> int:
         print(f"created {path}")
     for path in kept:
         print(f"kept    {path}")
+    print(exclude_vault(root))
+    vault_repo(top)
+    if slug:
+        connect_remote(top, slug)
+    tracked = tracked_vault_files(root)
+    if tracked:
+        print(f"warning: {len(tracked)} vault file(s) are already tracked by Git; untrack them "
+              "with `git rm -r --cached dev` so they leave the next commit and pull request")
     if feature:
         print(f"\nThis vault is `{feature}`'s own. Read the host codebase and write "
               f"{here}/architecture.md's incorporation section FIRST - where the feature attaches, "
@@ -623,8 +784,16 @@ def resume(root: Path, full: bool = False, feature: str | None = None) -> int:
     dev = vault(root, feature)
     active = dev / "activeContext.md"
     header = parse_header(active)
+    excluded = exclude_vault(root)
     print("=== GIT ===")
     print(f"root: {root}")
+    if excluded.startswith("added"):
+        print(excluded)
+    tracked = tracked_vault_files(root)
+    if tracked:
+        print(f"vault: {len(tracked)} file(s) tracked by Git - run `git rm -r --cached dev` and commit")
+    elif (root / "dev").exists() and run(["git", "check-ignore", "-q", "dev/"], root).returncode:
+        print("vault: dev/ is NOT ignored by Git - run `init`")
     print(f"HEAD: {run_git(root, 'rev-parse', '--short', 'HEAD')}")
     print(f"branch: {run_git(root, 'branch', '--show-current')}")
     status = run_git(root, "status", "--short")
@@ -638,6 +807,7 @@ def resume(root: Path, full: bool = False, feature: str | None = None) -> int:
     else:
         print("unpushed: 0")
     print(f"vault: {'valid' if check(root, quiet=True) == 0 else 'INVALID (run check)'}")
+    print(f"vault repository: {vault_status(root / 'dev')}")
     written = header.get("HEAD", "")
     if written:
         behind = run_git(root, "rev-list", "--count", f"{written}..HEAD")
@@ -805,6 +975,9 @@ def parser() -> argparse.ArgumentParser:
     sub = out.add_subparsers(dest="command", required=True)
     init_parser = sub.add_parser("init")
     init_parser.add_argument("--feature", default=None)
+    init_parser.add_argument("--remote", action="store_true")
+    init_parser.add_argument("--name", default=None)
+    init_parser.add_argument("--owner", default=None)
     init_parser.add_argument("repository", nargs="?", default=os.getcwd())
     plan_parser = sub.add_parser("plan")
     plan_parser.add_argument("milestone")
@@ -818,6 +991,10 @@ def parser() -> argparse.ArgumentParser:
     check_parser = sub.add_parser("check")
     check_parser.add_argument("--feature", default=None)
     check_parser.add_argument("repository", nargs="?", default=os.getcwd())
+    sync_parser = sub.add_parser("sync")
+    sync_parser.add_argument("-m", "--message", default="Update development vault")
+    sync_parser.add_argument("repository", nargs="?", default=os.getcwd())
+    sub.add_parser("doctor")
     migrate_parser = sub.add_parser("migrate")
     migrate_parser.add_argument("--apply", action="store_true")
     migrate_parser.add_argument("repository", nargs="?", default=os.getcwd())
@@ -826,9 +1003,13 @@ def parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = parser().parse_args()
+    if args.command == "doctor":
+        return doctor()
     root = root_path(args.repository)
     if args.command == "init":
-        return init(root, args.feature)
+        return init(root, args.feature, args.remote, args.name, args.owner)
+    if args.command == "sync":
+        return sync(root, args.message)
     if args.command == "plan":
         return plan(root, args.milestone, args.slug, args.feature)
     if args.command == "resume":

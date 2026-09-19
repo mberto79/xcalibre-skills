@@ -6,22 +6,22 @@ description: Close a phase or feature and prepare it for pull-request submission
 # Phase / feature close
 
 `xcalibre-dev` owns the build loop and optimises for RECOVERY: every dead end, decision id and probe
-survives so a crashed session resumes. Close optimises for the NEXT READER, who is human and has
-none of that context. Closing is therefore mostly DELETION, and the test for every line kept is:
-**would someone starting fresh next month be worse off without it?** If not, git already has it.
+survives so a crashed session resumes. Close optimises for the NEXT READER, a human with none of
+that context. Closing is therefore mostly DELETION; the test for every line kept: **would someone starting fresh next month be worse off without it?** If not, git already has it.
 
 Two things are never deleted: the shipped code, and the record of what was TRIED AND FAILED - the
 only artifact that stops the next phase repeating a dead end.
 
-Before handoff, read `../xcalibre-pr/SKILL.md`, run its preflight checks, and report any open items. This close skill must not commit or open the pull request; when the checks pass, tell the user to invoke `xcalibre-pr` separately for submission.
+Before handoff, read `../xcalibre-pr/SKILL.md`, run its preflight checks, and report any open items. Close never commits or opens the pull request; when the checks pass, tell the user to invoke `xcalibre-pr` separately for submission.
 
 **Phase close** (one phase ends, the project continues) and **feature close** (development stops)
 run the same steps.
 
 ## 0. Preconditions - refuse to close on a soft floor
 Working tree clean, `STATE: IDLE`, no open item in `dev/phaseRoadmap.md`, no `## blocked`, and the
-FULL gate green, run cold in this session. A close that ships a stale green is the one mistake
-nothing catches later. Ask the user before closing if any of these is untrue. Never close a phase
+FULL gate green, run cold in this session. The vault is not part of the project branch: `git ls-files dev`
+prints nothing (else `git rm -r --cached dev`) and `/dev/` is in `.git/info/exclude`. A close that ships a stale green is the one mistake
+nothing catches later. If any of these is untrue, ask the user before closing. Never close a phase
 to tidy a red.
 
 `<slug>` = the phase (`phase1`) or feature name. Closed records land in
@@ -51,13 +51,13 @@ duplicate their content in the closed phase record.
 Three project-level files are not phase records and must be brought CURRENT, never deleted:
 
 - **`dev/architecture.md`** - the project-wide architecture as it stands today, across all phases.
-  Fold in what this phase changed; drop what it retired. This is the map a rework of the main plan
-  starts from, and it is different from `dev/archive/phases/<slug>/README.md`, which is history.
+  Fold in what this phase changed; drop what it retired. It is the map a rework of the main plan
+  starts from; `dev/archive/phases/<slug>/README.md` is history.
 - **`dev/roadmap.md`** - tick the phase with its one-line delivered result and point at
   `dev/archive/phases/<slug>/README.md`. The phase is a STEP in this plan, never the plan. Surviving `## carried`
   lines move to `## flagged`, tagged by origin phase.
 - **`dev/spec.md`** - rewrite to describe the DELIVERED system: every requirement still binding, in
-  plain language, with the narration of how it got that way removed. A requirement whose only
+  plain language, without the narration of how it got that way. A requirement whose only
   remaining content is the history of its own amendments is a
   `dev/archive/phases/<slug>/decisions.md` line, not a
   requirement. Keep the vocabulary section in full - it is the most valuable thing in the file.
@@ -70,7 +70,7 @@ state that no phase is active when development has closed.
 A test harness and an example are different artifacts, and during a build the harness wins. Invert
 it: an example is read by a user who wants to know **how to drive the API**.
 - Each example is a SELF-CONTAINED SCRIPT read top to bottom - build the input, configure, run,
-  inspect - with the actual API calls visible, not behind a helper taking a case name.
+  inspect - with the API calls visible, not behind a helper taking a case name.
 - Shared machinery that deserves to stay shared (fixture inputs, a report printer, an output writer)
   goes in one support file, and it must be the boring part. Nothing showing the API's SHAPE lives
   there.
@@ -91,8 +91,8 @@ and guarantees - not why it was built that way.
 
 Work largest comment count first, and rewrite by LINE RANGE off a comment-block dump
 (`xcalibre-dev/scripts/comment_blocks.py`) rather than reading whole files. A mechanical sweep for
-id parentheticals is cheap and safe; read back what it leaves, because stripping an id mid-sentence
-leaves prose that no longer parses. After each file confirm only comments moved:
+id parentheticals is cheap and safe; read back what it leaves - stripping an id mid-sentence leaves
+prose that no longer parses. After each file confirm only comments moved:
 `git diff -U0 -- <file> | grep -E '^[+-]' | grep -vE '^[+-]\s*#|^[+-]{3}'`.
 
 ## 5. Delete the generated leftovers
@@ -102,17 +102,22 @@ harness) - each with a one-line entry in the scripts index, and **renamed off an
 those ids are being retired. Keep reusable fixture inputs. Verify the ignore rules still cover what
 the tooling regenerates.
 
+Everything this close writes under `dev/`, `dev/archive/` included, is recorded with
+`xcalibre-dev sync`, never in a project commit.
+
 Recorded numbers keyed by step id are worthless after a close - step namespaces collide across plan
 revisions. Rewrite `dev/telemetry/benchmarks.csv` from the closing gate, keyed by what each number measures.
 
 ## 6. Validate packaged skills
-Do not synchronise installed skill copies. If a workflow skill changed during close, confirm that
-the canonical copy under `plugins/xcalibre-skills/skills/` passes validation. Marketplace updates
-are delivered after the skills repository change is committed and pushed.
+Do not synchronise installed skill copies. If a workflow skill changed during close, confirm the
+canonical copy under `plugins/xcalibre-skills/skills/` passes validation. Marketplace updates ship
+after the skills repository change is committed and pushed.
 
 ## 7. Gate and hand off
 - **Run the full gate again, cold.** The cleanup touched comments, examples and specs; a green
   before it is not a green after it.
+- Confirm `git status --porcelain` and `git diff --name-only <base>...HEAD` list nothing under
+  `dev/`, then run `xcalibre-dev sync -m "Close <slug>"`.
 - Run the `xcalibre-pr` preflight checks and report every open item.
 - Do not commit, push, merge, or open a pull request. When the checks pass, tell the user to invoke
   `xcalibre-pr` separately to commit and open the pull request.

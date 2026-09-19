@@ -5,11 +5,11 @@ description: Write idiomatic XCALibre.jl kernels and fused field loops. Use when
 
 # XCALibre Kernel Style
 
-Follow existing XCALibre patterns first. Keep kernels compact, typed where dispatch matters, and naming convection is action-oriented.
+Follow existing XCALibre patterns first. Keep kernels compact, typed where dispatch matters, with action-oriented names.
 
 ## Choose the Kernel Form
 
-- Prefer `xcal_foreach(field, config) do i ... end` for local fused updates over fields, especially when combining several per-cell or per face calculations in models/solvers.
+- Prefer `xcal_foreach(field, config) do i ... end` for local fused field updates, especially combining several per-cell or per-face calculations in models/solvers.
 - Use `KernelAbstractions.@kernel` when the operation is reusable, needs explicit launch control, has multiple dispatch variants, touches sparse/raw arrays, or benefits from `@uniform`.
 - Launch KA kernels from a public wrapper:
 
@@ -22,7 +22,7 @@ function name!(out, a::MyType, config)
     kernel!(out, a)
 end
 
-@kernel function _name(out, a)
+@kernel function _name!(out, a)
    i = @index(Global)
 
    @inbounds begin
@@ -33,11 +33,11 @@ end
 
 ## Field and Vector Rules
 
-- Pass XCALibre fields directly to kernels; do not pass `field.values` or component arrays unless the code truly needs raw storage.
+- Pass XCALibre fields directly to kernels; do not pass `field.values` or component arrays unless raw storage is truly needed.
 - Read and write fields by direct indexing: `phi[i]`, `U[i]`, `phif[i] = ...`.
 - Use direct vector/matrix algebra with StaticArrays: `a ⋅ b`, `norm(U[i])`, `tr(gradU[i])`, `g + g'`, `0.5*(g - g')`.
-- In kernels, write vector dot products with the infix `⋅` operator (`\cdot<Tab>` in Julia editing) instead of `dot(a, b)`.
-- Avoid expanding vector operations into `x/y/z` components. The exception is `Atomix.@atomic` on individual vector components; then pass/update each component separately.
+- In kernels, write dot products with infix `⋅` (typed `\cdot<Tab>`), not `dot(a, b)`.
+- Avoid expanding vector operations into `x/y/z` components, except for `Atomix.@atomic` on individual vector components, where each component is passed/updated separately.
 
 ## Naming and Dispatch
 
@@ -64,7 +64,7 @@ end
 end
 ```
 
-- Prefer succinct action names. Use `update!`, `flux!`, `correct!`, etc. when surrounding types make the meaning clear; add words only when needed to disambiguate.
+- Prefer succinct action names (`update!`, `flux!`, `correct!`, etc.) when surrounding types make the meaning clear; add words only to disambiguate.
 
 ## Pitfalls (hard-won)
 
