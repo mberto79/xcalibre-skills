@@ -12,6 +12,6 @@ Keep project-specific helpers in `dev/scripts/` with an index. Add a helper to t
 
 The repository copy under `plugins/xcalibre-skills/skills/xcalibre-dev/` is canonical. Claude and Codex installations come from their marketplace manifests; never synchronise or edit installed copies directly.
 
-After changing this skill or its scripts, validate the canonical skill and both plugin manifests. Commit and push the change so marketplace users receive the revised package through their platform's update mechanism.
+After changing this skill or its scripts, validate the canonical skill and both plugin manifests. Bump `version` in `.codex-plugin/plugin.json` on every release (Codex refreshes only when it changes; never add `version` to `.claude-plugin/plugin.json`, where Claude versions by commit). Commit and push the change so marketplace users receive the revised package through their platform's update mechanism.
 
 Source comments do not carry transient vault step or decision IDs.
