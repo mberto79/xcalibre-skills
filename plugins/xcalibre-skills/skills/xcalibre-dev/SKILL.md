@@ -54,9 +54,10 @@ One fact has one home:
 | `dev/telemetry/` | Append-only measurements and gate results |
 | `dev/scripts/` | Indexed, project-specific reusable development helpers |
 | `dev/features/<slug>/` | One feature's own vault: the same records, scoped to that feature |
+| `dev/features/INDEX.md` | Which project branch each feature is built on, and whether it is open |
 | `dev/archive/` | Historical, non-authoritative records |
 
-**THE VAULT IS ITS OWN REPOSITORY.** `dev/` is a separate Git repository with a private GitHub remote, and `/dev/` is in the project's `.git/info/exclude` (never its `.gitignore`), so vault history is kept and no vault file enters a project commit or pull request. `check` is INVALID while the project tracks a vault file; `git rm -r --cached dev` untracks it.
+**THE VAULT IS ITS OWN REPOSITORY.** `dev/` is a separate Git repository with a private GitHub remote, and `/dev/` is in the project's `.git/info/exclude` (never its `.gitignore`), so vault history is kept and no vault file enters a project commit or pull request. `check` is INVALID while the project tracks a vault file; `git rm -r --cached dev` untracks it. THE VAULT REPOSITORY HAS ONE BRANCH: project branches are told apart by feature vaults and their index rows, never by vault branches, so every feature's records travel in one history.
 
 ## First use
 
@@ -128,7 +129,7 @@ The filename carries the ID, so a plan is traceable to its row by name alone, ne
 
 ### Opening a feature
 
-`init --feature <slug>` creates a vault for that feature at `dev/features/<slug>/`, beside the project's own, and IS `dev/` when the project has no vault yet - so a feature is how a project acquires one. Every record, budget, ID rule and check in this file applies inside it unchanged; `check`, `resume` and `plan` take `--feature <slug>`.
+`init --feature <slug> [--branch <name>]` creates a vault for that feature at `dev/features/<slug>/`, beside the project's own (scaffolded first when absent), and binds it to the project branch it is built on - the checked-out one by default - with a row in `dev/features/INDEX.md`. ONE OPEN FEATURE PER BRANCH, so several features are built at once, each on its own branch, and switching branch switches vault: `resume` and `plan` act on the feature bound to the checked-out branch, `--feature <slug>` overrides, and a branch with no open row uses the project vault. Every record, budget, ID rule and check in this file applies inside it unchanged; `check` reads every vault and the index.
 
 THE VAULT IS THE FEATURE'S, AND SO IS ITS SPEC: it states what THE FEATURE must be true of, naming the project's requirements and the existing code's behaviour as INHERITED CONSTRAINTS it may not break. Its records are filled in a fixed ORDER - the request verbatim, then the host survey read off the CODE, then where the feature attaches and what that choice costs, then the feature's own spec, then its milestones - because that order stops an invention being recorded as a requirement.
 
@@ -137,7 +138,7 @@ THE VAULT IS THE FEATURE'S, AND SO IS ITS SPEC: it states what THE FEATURE must 
 ### Starting, adopting, extending
 
 - `init` scaffolds a project vault into a repository that has none: every record below, from the templates in `<skill-dir>/reference/`, with phase `P1` open and nothing invented.
-- `init --feature <slug>` does the same for one feature, as above.
+- `init --feature <slug> [--branch <name>]` does the same for one feature, as above; on an existing feature it only adds a missing index row.
 - `migrate` adopts an existing `dev/`: it renames legacy core files, converts flat JSON baselines and archives legacy fragments. Run it dry first and read what it would do.
 - Work that is not a feature and not a phase - a refactor, a debugging campaign - is a MILESTONE of the active phase in the vault that owns the code.
 
@@ -233,7 +234,7 @@ Run from any checkout; `<skill-dir>` is the directory containing this file.
 
 ```text
 <skill-dir>/scripts/xcalibre-dev doctor
-<skill-dir>/scripts/xcalibre-dev init [--feature <slug>] [--remote [--name <repo>] [--owner <account>]] [repository]
+<skill-dir>/scripts/xcalibre-dev init [--feature <slug> [--branch <name>]] [--remote [--name <repo>] [--owner <account>]] [repository]
 <skill-dir>/scripts/xcalibre-dev sync [-m <message>] [repository]
 <skill-dir>/scripts/xcalibre-dev plan <milestone-id> <slug> [--feature <slug>] [repository]
 <skill-dir>/scripts/xcalibre-dev resume [--full] [--feature <slug>] [repository]
@@ -242,7 +243,7 @@ Run from any checkout; `<skill-dir>` is the directory containing this file.
 <skill-dir>/scripts/xcalibre-dev migrate --apply [repository]
 ```
 
-`init` scaffolds a vault from `<skill-dir>/reference/`, never overwrites an existing record, makes `dev/` its own repository and excludes it from the project; `--remote` links it to a private `<owner>/<project>-dev-vault`, creating or cloning it. `sync` commits and pushes the vault. `doctor` reports missing tools with install commands; `--feature <slug>` makes it that feature's own vault. `plan` creates a milestone plan under the one legal name. `resume` emits Git facts, then the two records a session must have READ BEFORE IT ACTS - `activeContext.md`, which says what to do next, and `gotchas.md`, which says how work is done here: the evidence ladder, the cheapest artefact that answers a question, what a gate is and is not for. The other `LOAD` records are consulted on demand and are manifested by name and size; `--full` emits every one of them as a context packet. `check` validates that no vault file is tracked by Git, the schema, header, paths, budgets and block form, telemetry headers, the `spec.md` and `decisions.md` entry formats, and the phase/milestone/plan naming above. IT IS A LOOP AND NOT A FINAL EXAM: run it, fix exactly what it names, run it again, and only then commit the code. It exits non-zero on INVALID, so `check && commit` is safe - but a PIPELINE's status is its LAST command's, so a status read through `| tail` is that tool's and says nothing about the vault. `migrate` is dry-run by default; `--apply` renames legacy core files, converts flat JSON baselines, and archives legacy `phase*.md` fragments while preserving linked milestone plans.
+`init` scaffolds a vault from `<skill-dir>/reference/`, never overwrites an existing record, makes `dev/` its own repository and excludes it from the project; `--remote` links it to a private `<owner>/<project>-dev-vault`, creating or cloning it. `sync` commits the vault, rebases it on its remote - features built on other machines touch other folders - and pushes. `doctor` reports missing tools with install commands. `--feature <slug>` makes `init` scaffold that feature's own vault and index row; on `plan` and `resume` it defaults to the open feature bound to the checked-out branch. `plan` creates a milestone plan under the one legal name. `resume` emits Git facts, then the two records a session must have READ BEFORE IT ACTS - `activeContext.md`, which says what to do next, and `gotchas.md`, which says how work is done here: the evidence ladder, the cheapest artefact that answers a question, what a gate is and is not for. The other `LOAD` records are consulted on demand and are manifested by name and size; `--full` emits every one of them as a context packet. `check` validates that no vault file is tracked by Git, the schema, header, paths, budgets and block form, telemetry headers, the `spec.md` and `decisions.md` entry formats, and the phase/milestone/plan naming above. IT IS A LOOP AND NOT A FINAL EXAM: run it, fix exactly what it names, run it again, and only then commit the code. It exits non-zero on INVALID, so `check && commit` is safe - but a PIPELINE's status is its LAST command's, so a status read through `| tail` is that tool's and says nothing about the vault. `migrate` is dry-run by default; `--apply` renames legacy core files, converts flat JSON baselines, and archives legacy `phase*.md` fragments while preserving linked milestone plans.
 
 ## Maintaining this skill
 

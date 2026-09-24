@@ -63,6 +63,7 @@ TEMPLATES = {
     "scripts-INDEX.md": "scripts-INDEX.md",
     "feature-spec.md": "feature-spec.md",
     "feature-architecture.md": "feature-architecture.md",
+    "features-INDEX.md": "features-INDEX.md",
 }
 
 
@@ -97,6 +98,62 @@ def vaults(root: Path) -> list[Path]:
 
 def label(root: Path, dev: Path) -> str:
     return dev.relative_to(root).as_posix()
+
+
+FEATURE_ROW = re.compile(r"^-\s*\[([ x-])\]\s*([a-z0-9]+(?:-[a-z0-9]+)*)\s+on\s+`([^`]+)`\s*-")
+
+
+def feature_index(root: Path) -> Path:
+    return root / "dev" / "features" / "INDEX.md"
+
+
+def feature_rows(root: Path) -> list[tuple[str, str, str, str]]:
+    """(state, slug, branch, whole line) for every row of the features index."""
+    path = feature_index(root)
+    if not path.is_file():
+        return []
+    found = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        match = FEATURE_ROW.match(line.strip())
+        if match:
+            found.append((*match.groups(), line))
+    return found
+
+
+def branch_feature(root: Path) -> str | None:
+    """The open feature bound to the project branch that is checked out, if any."""
+    branch = run_git(root, "branch", "--show-current")
+    for state, slug, bound, _ in feature_rows(root):
+        if state == " " and bound == branch:
+            return slug
+    return None
+
+
+def index_errors(root: Path) -> list[str]:
+    """Every feature vault has one row, every open row its vault, and a branch one open feature."""
+    features = root / "dev" / "features"
+    if not features.is_dir():
+        return []
+    where = label(root, feature_index(root))
+    if not feature_index(root).is_file():
+        return [f"missing {where}: run `init --feature <slug> --branch <name>` for each feature"]
+    found = feature_rows(root)
+    errors = id_errors(where, [(state, slug, line) for state, slug, _, line in found])
+    indexed = {slug for _, slug, _, _ in found}
+    for path in sorted(features.iterdir()):
+        if (path / "spec.md").is_file() and path.name not in indexed:
+            errors.append(f"{where} has no row for {label(root, path)}: run "
+                          f"`init --feature {path.name} --branch <name>`")
+    owners: dict[str, str] = {}
+    for state, slug, branch, _ in found:
+        if state != " ":
+            continue
+        if not (features / slug / "spec.md").is_file():
+            errors.append(f"{where}: open feature {slug} has no vault at dev/features/{slug}")
+        if branch in owners:
+            errors.append(f"{where}: branch {branch} is bound to both {owners[branch]} and {slug}")
+        owners[branch] = slug
+    return errors
 
 
 def root_path(value: str) -> Path:
@@ -219,7 +276,13 @@ def sync(root: Path, message: str) -> int:
         print("vault: no remote - `init --remote` creates a private one")
         return 0
     has_upstream = run(["git", "rev-parse", "@{upstream}"], top).returncode == 0
-    pushed = run(["git", "push", "-q"] if has_upstream else ["git", "push", "-q", "-u", "origin", "HEAD"], top)
+    # Other branches' features land from other machines; their folders are disjoint, so rebase.
+    pulled = run(["git", "pull", "-q", "--rebase"], top) if has_upstream else None
+    if pulled and pulled.returncode:
+        run(["git", "rebase", "--abort"], top)
+        print(f"vault pull failed, local commit kept: {pulled.stdout.strip()}")
+        return 1
+    pushed =run(["git", "push", "-q"] if has_upstream else ["git", "push", "-q", "-u", "origin", "HEAD"], top)
     if pushed.returncode:
         print(f"vault push failed: {pushed.stdout.strip()}")
         return 1
@@ -666,6 +729,7 @@ def check(root: Path, quiet: bool = False, feature: str | None = None) -> int:
     errors: list[str] = []
     for dev in targets:
         errors.extend(vault_errors(root, dev))
+    errors.extend(index_errors(root))
     errors.extend(comment_errors(root))
     tracked = tracked_vault_files(root)
     if tracked:
@@ -683,23 +747,75 @@ def check(root: Path, quiet: bool = False, feature: str | None = None) -> int:
 
 
 def init(root: Path, feature: str | None = None, remote: bool = False,
-         name: str | None = None, owner: str | None = None) -> int:
+         name: str | None = None, owner: str | None = None, branch: str | None = None) -> int:
     """Scaffold a vault from the skill's own reference forms. Never overwrites a record.
 
-    With `feature`, the vault is that FEATURE's own: its spec states what the FEATURE must be true
-    of, its roadmap is the technical roadmap for building it. It is placed beside the project's
-    vault when one exists, and IS the project's vault when none does.
+    With `feature`, the vault is that FEATURE's own, under `dev/features/`, bound to a project
+    branch by its row in the features index; the project vault is scaffolded first when absent.
     """
     top = root / "dev"
+    dev = vault(root, feature)
     slug = remote_slug(root, name, owner) if remote else None
     if slug and not top.exists() and remote_exists(root, slug):
         run(["gh", "repo", "clone", slug, str(top)], root)
         print(f"cloned  vault from {slug}")
-    dev = vault(root, feature)
-    if feature and not (top / "spec.md").is_file():
-        dev = top
-    here = label(root, dev)
+    if feature:
+        branch = branch or run_git(root, "branch", "--show-current")
+        if not branch:
+            raise SystemExit("detached HEAD: pass --branch <name> for the feature's project branch")
+        indexed = {ident: (state, bound) for state, ident, bound, _ in feature_rows(root)}
+        taken = [ident for ident, (state, bound) in indexed.items()
+                 if state == " " and bound == branch and ident != feature]
+        if taken:
+            raise SystemExit(f"branch {branch} is already bound to feature {taken[0]}; "
+                             "pass --branch <name>")
     made, kept = [], []
+    if feature and not (top / "spec.md").is_file():
+        scaffold(root, top, None, None, made, kept)
+    scaffold(root, dev, feature, branch, made, kept)
+    index = feature_index(root)
+    (kept if index.exists() else made).append(label(root, index))
+    if not index.exists():
+        index.parent.mkdir(parents=True, exist_ok=True)
+        index.write_text(template("features-INDEX.md"), encoding="utf-8")
+    # Features opened on two machines append rows concurrently; a union merge keeps both.
+    attributes = top / ".gitattributes"
+    if "merge=union" not in (attributes.read_text(encoding="utf-8") if attributes.is_file() else ""):
+        with attributes.open("a", encoding="utf-8") as out:
+            out.write("features/INDEX.md merge=union\n")
+    if feature and feature not in indexed:
+        with index.open("a", encoding="utf-8") as out:
+            out.write(f"- [ ] {feature} on `{branch}` - <what it delivers>\n")
+        print(f"indexed {feature} on branch {branch}")
+    for path in made:
+        print(f"created {path}")
+    for path in kept:
+        print(f"kept    {path}")
+    print(exclude_vault(root))
+    vault_repo(top)
+    if slug:
+        connect_remote(top, slug)
+    tracked = tracked_vault_files(root)
+    if tracked:
+        print(f"warning: {len(tracked)} vault file(s) are already tracked by Git; untrack them "
+              "with `git rm -r --cached dev` so they leave the next commit and pull request")
+    here = label(root, dev)
+    if feature:
+        print(f"\nThis vault is `{feature}`'s own. Read the host codebase and write "
+              f"{here}/architecture.md's incorporation section FIRST - where the feature attaches, "
+              "what it may not break - then state the FEATURE's outcomes in "
+              f"{here}/spec.md, then its phases and milestones. Nothing the user did not say and "
+              "the codebase does not imply is a requirement; it is an open question.")
+    else:
+        print(f"\nFill in `{here}/spec.md` first, then `{here}/roadmap.md`'s phases and "
+              f"`{here}/phaseRoadmap.md`'s milestones. Run `check` when they say something.")
+    return 0
+
+
+def scaffold(root: Path, dev: Path, feature: str | None, branch: str | None,
+             made: list[str], kept: list[str]) -> None:
+    """Seed one vault's records from the reference forms, keeping any that exist."""
+    here = label(root, dev)
     for name in ("", "plans", "telemetry", "scripts", "archive", "archive/phases",
                  "archive/plans", "archive/reviews"):
         (dev / name).mkdir(parents=True, exist_ok=True)
@@ -722,34 +838,12 @@ def init(root: Path, feature: str | None = None, remote: bool = False,
         if not path.exists():
             body = template(name).replace("dev/", f"{here}/")
             if feature:
-                body = body.replace("<feature>", feature)
+                body = body.replace("<feature>", feature).replace("<working branch>", branch)
             path.write_text(body, encoding="utf-8")
     bench = dev / "telemetry" / "benchmarks.csv"
     (kept if bench.exists() else made).append(f"{here}/telemetry/benchmarks.csv")
     if not bench.exists():
         bench.write_text("metric_key,value\n", encoding="utf-8")
-    for path in made:
-        print(f"created {path}")
-    for path in kept:
-        print(f"kept    {path}")
-    print(exclude_vault(root))
-    vault_repo(top)
-    if slug:
-        connect_remote(top, slug)
-    tracked = tracked_vault_files(root)
-    if tracked:
-        print(f"warning: {len(tracked)} vault file(s) are already tracked by Git; untrack them "
-              "with `git rm -r --cached dev` so they leave the next commit and pull request")
-    if feature:
-        print(f"\nThis vault is `{feature}`'s own. Read the host codebase and write "
-              f"{here}/architecture.md's incorporation section FIRST - where the feature attaches, "
-              "what it may not break - then state the FEATURE's outcomes in "
-              f"{here}/spec.md, then its phases and milestones. Nothing the user did not say and "
-              "the codebase does not imply is a requirement; it is an open question.")
-    else:
-        print(f"\nFill in `{here}/spec.md` first, then `{here}/roadmap.md`'s phases and "
-              f"`{here}/phaseRoadmap.md`'s milestones. Run `check` when they say something.")
-    return 0
 
 
 def plan(root: Path, milestone: str, slug: str, feature: str | None = None) -> int:
@@ -796,7 +890,12 @@ def resume(root: Path, full: bool = False, feature: str | None = None) -> int:
         print("vault: dev/ is NOT ignored by Git - run `init`")
     print(f"HEAD: {run_git(root, 'rev-parse', '--short', 'HEAD')}")
     print(f"branch: {run_git(root, 'branch', '--show-current')}")
-    status = run_git(root, "status", "--short")
+    print(f"records: {label(root, dev)}" + (f" (feature {feature})" if feature else " (project)"))
+    features = [f"  [{state}] {slug} on {bound}" for state, slug, bound, _ in feature_rows(root)]
+    if not feature and any(line.startswith("  [ ]") for line in features):
+        print("features (none bound to this branch; `--feature <slug>` selects one):\n"
+              + "\n".join(features))
+    status =run_git(root, "status", "--short")
     print("status:\n" + (status or "clean"))
     print("recent:\n" + run_git(root, "log", "-3", "--oneline", "--decorate"))
     unpushed = run_git(root, "rev-list", "--count", "@{upstream}..HEAD")
@@ -978,6 +1077,7 @@ def parser() -> argparse.ArgumentParser:
     init_parser.add_argument("--remote", action="store_true")
     init_parser.add_argument("--name", default=None)
     init_parser.add_argument("--owner", default=None)
+    init_parser.add_argument("--branch", default=None)
     init_parser.add_argument("repository", nargs="?", default=os.getcwd())
     plan_parser = sub.add_parser("plan")
     plan_parser.add_argument("milestone")
@@ -992,7 +1092,7 @@ def parser() -> argparse.ArgumentParser:
     check_parser.add_argument("--feature", default=None)
     check_parser.add_argument("repository", nargs="?", default=os.getcwd())
     sync_parser = sub.add_parser("sync")
-    sync_parser.add_argument("-m", "--message", default="Update development vault")
+    sync_parser.add_argument("-m", "--message", default=None)
     sync_parser.add_argument("repository", nargs="?", default=os.getcwd())
     sub.add_parser("doctor")
     migrate_parser = sub.add_parser("migrate")
@@ -1007,9 +1107,13 @@ def main() -> int:
         return doctor()
     root = root_path(args.repository)
     if args.command == "init":
-        return init(root, args.feature, args.remote, args.name, args.owner)
+        return init(root, args.feature, args.remote, args.name, args.owner, args.branch)
+    if args.command in ("plan", "resume"):
+        args.feature = args.feature or branch_feature(root)
     if args.command == "sync":
-        return sync(root, args.message)
+        feature = branch_feature(root)
+        return sync(root, args.message or "Update development vault"
+                    + (f" ({feature})" if feature else ""))
     if args.command == "plan":
         return plan(root, args.milestone, args.slug, args.feature)
     if args.command == "resume":

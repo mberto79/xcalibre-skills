@@ -14,6 +14,7 @@
 | `dev/telemetry/*` | Benchmarks and gate results | Unlimited | Append-only |
 | `dev/scripts/*` | Indexed project-specific helpers | Unlimited | Read / Update |
 | `dev/features/<slug>/` | One feature's own vault, same records | Same budgets | Read / Write |
+| `dev/features/INDEX.md` | Feature to project branch, open or closed | One row per feature | Read / Append |
 | `dev/archive/*` | Historical, non-authoritative records | Unlimited | Read-only |
 
 `dev/` is its own Git repository with a private remote, excluded from the project through `.git/info/exclude`: no vault file enters a project commit or pull request.

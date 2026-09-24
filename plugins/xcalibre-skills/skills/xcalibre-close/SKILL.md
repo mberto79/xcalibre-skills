@@ -62,6 +62,8 @@ Three project-level files are not phase records and must be brought CURRENT, nev
   `dev/archive/phases/<slug>/decisions.md` line, not a
   requirement. Keep the vocabulary section in full - it is the most valuable thing in the file.
 
+A feature close also closes its row in `dev/features/INDEX.md` - `[x]` with the archive path - which frees its branch; the row is never deleted.
+
 Then reset `dev/activeContext.md` for the next phase: `## doing` cleared, `## blocked` and `## attempts`
 gone, `LOAD:` pointing at the new state. Reset `dev/phaseRoadmap.md` for the next phase, or make it
 state that no phase is active when development has closed.
