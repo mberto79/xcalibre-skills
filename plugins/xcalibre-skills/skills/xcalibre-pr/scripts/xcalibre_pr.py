@@ -257,6 +257,33 @@ def ai_disclosure(body: str) -> str | None:
     return match.group(1).strip() if match else None
 
 
+OPENFOAM_TERMS = (
+    re.compile(r"(?i:\bOpen-?FOAM\b)|\bOF-?v?\d{1,4}\b"),
+    re.compile(r"\b(?:foam[A-Z]\w*|[a-z]+Foam)\b"),
+    re.compile(
+        r"\b(?:fvSchemes|fvSolution|fvOptions|fvConstraints|fvModels|controlDict|blockMeshDict|snappyHexMeshDict"
+        r"|polyMesh|momentumTransport|physicalProperties|transportProperties|turbulenceProperties"
+        r"|nCorrectors|nOuterCorrectors|nNonOrthogonalCorrectors|momentumPredictor|residualControl"
+        r"|relaxationFactors|pRefCell|pRefValue|consistent\s+(?:yes|true|on))\b"
+    ),
+    re.compile(
+        r"\b(?:[a-z]\w*WallFunction|zeroGradient|fixedValue|fixedGradient|inletOutlet|noSlip"
+        r"|symmetryPlane|totalPressure|pressureInletOutletVelocity)\b"
+    ),
+    re.compile(r"\b(?:div|laplacian|grad|snGrad|interpolate)\((?:phi|U|p|k|omega|epsilon|nut)\b[^)]*\)"),
+    re.compile(r"\bGauss\s+(?:linear|upwind|linearUpwind|limitedLinear|vanLeer|LUST)\b|\bbounded\s+Gauss\b"),
+)
+
+
+def openfoam_terms(body: str) -> list[str]:
+    found: list[str] = []
+    for pattern in OPENFOAM_TERMS:
+        for match in pattern.finditer(body):
+            if match.group(0) not in found:
+                found.append(match.group(0))
+    return found
+
+
 def changelog_lines(path: Path, number: int) -> list[tuple[int, str]]:
     marker = re.compile(rf"\[#{number}\](?:\(@ref\))?")
     matches = []
@@ -293,7 +320,7 @@ def preflight(arguments: argparse.Namespace) -> int:
     confirmed = set(arguments.confirm)
     if "all" in confirmed:
         confirmed.update(
-            {"theme", "description", "documentation", "example", "docstrings", "dependencies", "propagation", "grids", "identity"}
+            {"theme", "description", "self-contained", "documentation", "example", "docstrings", "dependencies", "propagation", "grids", "identity"}
         )
 
     def record(label: str, status: str, detail: str) -> None:
@@ -442,6 +469,14 @@ def preflight(arguments: argparse.Namespace) -> int:
                 "description",
                 "PR description",
                 f"confirm {description[0]} clearly explains what was added or changed",
+            )
+            terms = openfoam_terms(description_body)
+            flagged = f"; possible OpenFOAM terms: {', '.join(terms)}" if terms else ""
+            review(
+                "self-contained",
+                "Self-contained description",
+                "confirm the description uses no OpenFOAM lingo or justification, cites no case, run or data "
+                "outside XCALibre.jl, and explains numerics changes by their mathematics" + flagged,
             )
     except RuntimeError as error:
         record("PR description", "FAIL", str(error))
@@ -625,7 +660,7 @@ def parser() -> argparse.ArgumentParser:
         "--confirm",
         action="append",
         default=[],
-        choices=("theme", "description", "documentation", "example", "docstrings", "dependencies", "propagation", "grids", "identity", "all"),
+        choices=("theme", "description", "self-contained", "documentation", "example", "docstrings", "dependencies", "propagation", "grids", "identity", "all"),
         help="record a completed judgement-based review; repeat as needed",
     )
     check.add_argument("--skip-tests", action="store_true", help="skip the local Julia package test")

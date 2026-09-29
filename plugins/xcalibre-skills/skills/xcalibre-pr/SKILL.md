@@ -18,11 +18,12 @@ Prepare a focused, current, tested pull request that follows XCALibre.jl contrib
 7. For new functionality, require relevant tests, documentation following the existing project convention, and a minimal example under `examples/`. Prefer an existing grid; accept a new one only when necessary and very small.
 8. Require a successful local `Pkg.test()` run before submission. Exit code `0` means all automated checks passed; `1` means failure; `2` means a review or skipped test remains unresolved.
 9. Confirm the pull-request description clearly explains what was added or changed.
-10. Permit docstrings only for user-level API functions. Use comments for internal implementation details and keep every comment block to no more than three lines.
-11. When a dependency is added, require the pull-request description to list it and state its licence explicitly.
-12. When a common or base function changes, inspect its callers and propagate the change through every affected part of the codebase, including tests and documentation.
-13. Open the pull request through the human contributor's authenticated GitHub account. Never use an agent or bot identity as the pull-request author. Pass the contributor's GitHub login with `--expected-author`, then verify the assigned pull request reports that login as its author.
-14. Add a short final line to the pull-request description in the form `AI assistance: <vendor>, <model>.` Pass the same values with `--ai-vendor` and `--ai-model`. Use the vendor and model the host reports; do not guess. This disclosure does not make the AI an author or co-author.
+10. Keep the pull-request description self-contained: no OpenFOAM lingo (solver, dictionary, keyword, boundary-condition or scheme names such as `fvSchemes`, `nCorrectors`, `omegaWallFunction`, `div(phi,U)`), no appeal to OpenFOAM as justification, and no case, run, figure or data that is not available in the XCALibre.jl code base. For numerics changes, state the equation or discretised term being changed, the method, and the mathematical reason (stability, accuracy, consistency or boundedness). Preflight flags likely OpenFOAM terms for review; confirm with `--confirm self-contained`.
+11. Permit docstrings only for user-level API functions. Use comments for internal implementation details and keep every comment block to no more than three lines.
+12. When a dependency is added, require the pull-request description to list it and state its licence explicitly.
+13. When a common or base function changes, inspect its callers and propagate the change through every affected part of the codebase, including tests and documentation.
+14. Open the pull request through the human contributor's authenticated GitHub account. Never use an agent or bot identity as the pull-request author. Pass the contributor's GitHub login with `--expected-author`, then verify the assigned pull request reports that login as its author.
+15. Add a short final line to the pull-request description in the form `AI assistance: <vendor>, <model>.` Pass the same values with `--ai-vendor` and `--ai-model`. Use the vendor and model the host reports; do not guess. This disclosure does not make the AI an author or co-author.
 
 Use `python scripts/xcalibre_pr.py next-number --repository <checkout>` when a provisional number is needed. Re-run preflight with `--pr-number <actual-number>` after GitHub assigns the pull-request number. Record completed semantic reviews by repeating `--confirm <review>`, using the review names reported by `--help`.
 
