@@ -133,8 +133,8 @@ def added_files(root: Path, base_ref: str) -> list[str]:
     return [line for line in output.splitlines() if line]
 
 
-def changed_line_numbers(root: Path, base_ref: str) -> dict[str, set[int]]:
-    output = git(root, "diff", "--unified=0", f"{base_ref}...HEAD", "--", "*.jl")
+def changed_line_numbers(root: Path, base_ref: str, *patterns: str) -> dict[str, set[int]]:
+    output = git(root, "diff", "--unified=0", f"{base_ref}...HEAD", "--", *(patterns or ("*.jl",)))
     changed: dict[str, set[int]] = {}
     current: str | None = None
     for line in output.splitlines():
@@ -284,6 +284,63 @@ def openfoam_terms(body: str) -> list[str]:
     return found
 
 
+# Detail that ties a change to how it was developed rather than to XCALibre.jl itself: named CPU or
+# GPU models, cluster and scheduler details, local paths, and benchmark cases absent from the code base.
+HARDWARE_TERMS = re.compile(
+    r"\b(?:EPYC|Xeon|Ryzen|Threadripper|Opteron|Graviton|Altra|Core\s+i[3579]|Apple\s+M[1-9]"
+    r"|[ABHLV]100|H200|A40|MI\d{3}X?|(?:RTX|GTX)\s*\d{3,4}|Tesla\s+[A-Z]\w*)\b"
+)
+CLUSTER_TERMS = re.compile(
+    r"(?i)\b(?:sbatch|srun|squeue|salloc|slurm|qsub|bsub|job\s*(?:id\s*)?\d{5,})\b|--(?:partition|qos)\b"
+    r"|\b(?:comp|node|gpu|cn)\d{2,4}\b"
+)
+PATH_TERMS = re.compile(r"(?:/home/|/Users/|/gpfs\w*/|/scratch/|/tmp/|~/|[A-Za-z]:\\Users\\)[^\s;,)]*")
+CASE_NAMES = (
+    "motorBike", "pitzDaily", "cavity", "damBreak", "elbow", "airFoil2D", "TJunction", "channel395",
+    "periodicHill", "mixerVessel2D", "sloshingTank2D", "bubbleColumn", "windAroundBuildings",
+    "turbineSiting", "propeller", "simpleCar", "ahmedBody", "drivAer",
+)
+
+
+def environment_terms(text: str, tracked: str) -> list[str]:
+    found: list[str] = []
+    for pattern in (HARDWARE_TERMS, CLUSTER_TERMS, PATH_TERMS):
+        for match in pattern.finditer(text):
+            if match.group(0) not in found:
+                found.append(match.group(0))
+    for name in CASE_NAMES:
+        # a case is fine when the code base ships it (grid, example or test)
+        if re.search(rf"(?i)\b{name}\b", text) and name.casefold() not in tracked and name not in found:
+            found.append(name)
+    return found
+
+
+def changed_text_hits(
+    root: Path, changed: dict[str, set[int]], tracked: str, base_terms: set[str]
+) -> list[str]:
+    hits = []
+    for relative, line_numbers in changed.items():
+        path = root / relative
+        if not path.is_file():
+            continue
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        for number in sorted(line_numbers):
+            if number > len(lines):
+                continue
+            line = lines[number - 1]
+            # OpenFOAM names the code base already uses (its mesh reader, writer, grids) are its own
+            terms = [t for t in openfoam_terms(line) if t not in base_terms] + environment_terms(line, tracked)
+            if terms:
+                hits.append(f"{relative}:{number} ({', '.join(terms)})")
+    return hits
+
+
+def base_openfoam_terms(root: Path, base_ref: str) -> set[str]:
+    listed = command(["git", "grep", "-h", "-I", "-E", "-o", r"[A-Za-z_][A-Za-z0-9_]*", base_ref, "--", "src"], root)
+    words = set(listed.stdout.split()) if listed.returncode == 0 else set()
+    return {term for term in words if openfoam_terms(term)}
+
+
 def changelog_lines(path: Path, number: int) -> list[tuple[int, str]]:
     marker = re.compile(rf"\[#{number}\](?:\(@ref\))?")
     matches = []
@@ -426,6 +483,21 @@ def preflight(arguments: argparse.Namespace) -> int:
         new_files = []
         changed_lines = {}
 
+    try:
+        tracked_paths = git(root, "ls-files").casefold()
+        text_changes = changed_line_numbers(root, base_ref, "*.jl", "*.md")
+        hits = changed_text_hits(root, text_changes, tracked_paths, base_openfoam_terms(root, base_ref))
+        review(
+            "self-contained",
+            "Self-contained changes",
+            "confirm added source, comments, docstrings, documentation and CHANGELOG lines name no OpenFOAM "
+            "lingo or justification, no case outside XCALibre.jl, and no specific machine, cluster or path"
+            + (f"; flagged: {'; '.join(hits[:20])}" + (f" (+{len(hits) - 20} more)" if len(hits) > 20 else "") if hits else ""),
+        )
+    except RuntimeError as error:
+        tracked_paths = ""
+        record("Self-contained changes", "FAIL", str(error))
+
     actual_number = arguments.pr_number
     number = actual_number
     if number is None:
@@ -472,11 +544,14 @@ def preflight(arguments: argparse.Namespace) -> int:
             )
             terms = openfoam_terms(description_body)
             flagged = f"; possible OpenFOAM terms: {', '.join(terms)}" if terms else ""
+            specific = environment_terms(description_body, tracked_paths)
+            flagged += f"; possible environment-specific detail: {', '.join(specific)}" if specific else ""
             review(
                 "self-contained",
                 "Self-contained description",
                 "confirm the description uses no OpenFOAM lingo or justification, cites no case, run or data "
-                "outside XCALibre.jl, and explains numerics changes by their mathematics" + flagged,
+                "outside XCALibre.jl, describes hardware generically (sockets, cores, NUMA domains, GPU class) "
+                "and explains numerics changes by their mathematics" + flagged,
             )
     except RuntimeError as error:
         record("PR description", "FAIL", str(error))
