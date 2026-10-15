@@ -9,7 +9,7 @@ Prepare a focused, current, tested pull request that follows XCALibre.jl contrib
 
 ## Checklist
 
-1. From the skill directory, run `python scripts/xcalibre_pr.py preflight --repository <checkout>`, adding `--feature` for new functionality. Supply `--description-file <path>` until an assigned pull-request number lets the description be read from GitHub.
+1. From the skill directory, run `python scripts/xcalibre_pr.py preflight --repository <checkout>`, adding `--feature` for new functionality. Supply `--description-file <path>` until an assigned pull-request number lets the description be read from GitHub. When source under `src/` changes, also supply `--propagation-file <path>` (see **Propagation gate**).
 2. Confirm the feature branch contains the current base branch and exactly matches its remote tracking branch; resolve any divergence before submission.
 3. Confirm no development-vault file (`dev/`, including `dev/archive/` and `dev/features/`) is in the pull request; preflight fails when one is. Untrack it with `git rm -r --cached dev`, keep `/dev/` in `.git/info/exclude` rather than the project's `.gitignore`, and never stage it.
 4. Review the reported commits and changed files. Pass the single-theme check only when every change serves one coherent purpose; otherwise split the work into separate branches and pull requests.
@@ -21,16 +21,38 @@ Prepare a focused, current, tested pull request that follows XCALibre.jl contrib
 10. Keep the pull request self-contained: its description and every added source line, comment, docstring, documentation page and `CHANGELOG.md` item. Use no OpenFOAM lingo (solver, dictionary, keyword, boundary-condition or scheme names such as `fvSchemes`, `nCorrectors`, `omegaWallFunction`, `div(phi,U)`) and no appeal to OpenFOAM as justification; naming XCALibre.jl's own OpenFOAM-format features (`FOAM3D_mesh`, `OpenFOAM()` output) is fine. Cite no case, run, figure or data the XCALibre.jl code base does not ship: describe a benchmark by its type and size ("steady RANS case, 10M cells"), not by a case name. Describe hardware generically (sockets, cores, NUMA domains, GPU class), never by CPU or GPU model, cluster, partition, node, job or local path. For numerics changes, state the equation or discretised term being changed, the method, and the mathematical reason (stability, accuracy, consistency or boundedness). Preflight flags likely OpenFOAM terms, case names absent from the repository, hardware models, scheduler and node names, and local paths, in the description and in added `.jl` and `.md` lines; confirm with `--confirm self-contained`.
 11. Permit docstrings only for user-level API functions. Use comments for internal implementation details and keep every comment block to no more than three lines.
 12. When a dependency is added, require the pull-request description to list it and state its licence explicitly.
-13. When a common or base function changes, inspect its callers and propagate the change through every affected part of the codebase, including tests and documentation.
+13. Propagate every fix and every feature through the whole code base before submission. This is a hard gate, not a review item; see **Propagation gate**.
 14. Open the pull request through the human contributor's authenticated GitHub account. Never use an agent or bot identity as the pull-request author. Pass the contributor's GitHub login with `--expected-author`, then verify the assigned pull request reports that login as its author.
 15. Add a short final line to the pull-request description in the form `AI assistance: <vendor>, <model>.` Pass the same values with `--ai-vendor` and `--ai-model`. Use the vendor and model the host reports; do not guess. This disclosure does not make the AI an author or co-author.
 
 Use `python scripts/xcalibre_pr.py next-number --repository <checkout>` when a provisional number is needed. Re-run preflight with `--pr-number <actual-number>` after GitHub assigns the pull-request number. Record completed semantic reviews by repeating `--confirm <review>`, using the review names reported by `--help`.
 
+## Propagation gate
+
+A bug fix or a feature is complete only when it reaches every place in the code base that shares the changed behaviour. A local change that leaves parallel code paths with the old behaviour is not ready for a pull request.
+
+1. List what the change touches: functions, methods, types, dispatch types (for example a scheme in `Time{...}` or `Divergence{...}`), conventions (time level, sign, units, storage layout) and assumptions.
+2. Find every site that shares it. Preflight lists candidates automatically: references to the changed symbols in `src/`, `test/`, `docs/` and `examples/`, plus the sibling source files of each changed file. Name-based search cannot see parallel implementations, so also check by hand:
+   - every solver that implements the same algorithm (incompressible and compressible, steady and transient, multiphase, explicit and implicit);
+   - every equation that goes through the changed path (momentum, pressure, energy, turbulence and other scalar transport);
+   - every solve path (Krylov, mixed precision, AMG, distributed linear solves), smoothers and relaxation;
+   - CPU and GPU backends, serial and distributed meshes (halo exchanges), restart, and adaptive time stepping;
+   - user documentation, examples, tests and test cases that describe or exercise the behaviour.
+3. Apply the change at every affected site, with tests that show it works at each site (for numerics, an accuracy or order check, not only finite values).
+4. Write a propagation manifest outside the repository, one row per candidate and per hand-found site:
+
+   | site | status | reason |
+   |---|---|---|
+   | src/Solvers/Solvers_2_CPISO.jl | fixed | same restructuring as the incompressible solver; order test added |
+   | src/Solvers/Solvers_4_Godunov.jl | not-affected | explicit density-based solver; no implicit time term |
+
+   The status is exactly `fixed` or `not-affected`, and every `not-affected` row gives a reason. Pass the manifest with `--propagation-file`; the `propagation-manifest` review then asks you to confirm the reasons hold.
+5. Preflight fails when a candidate is missing from the manifest, when a row has any other status, when a `fixed` row names a file the diff does not change, when the manifest is committed, and when the description or the `CHANGELOG.md` item defers affected work ("limitations", "not covered by this fix", "follow-up", "future PR", "still uses", "TODO"). Never list affected-but-unchanged code as a limitation: implement it. Propagation is part of the requested change and needs no separate consent. If a site genuinely cannot be changed (for example it needs a design decision), stop and ask the user before opening the pull request.
+
 ## Open items and consent
 
 - Collect every failed, skipped, and unresolved review item into one list.
-- Ask the user to implement each open item or explicitly authorise the agent to implement it. Do not amend the contribution without that consent.
+- Ask the user to implement each open item or explicitly authorise the agent to implement it. Do not amend the contribution without that consent. Propagation of the requested fix or feature is the exception: it is part of the request, so carry it out.
 - If no open item remains, continue with the submission only when submission was included in the user's request.
 - Remind the contributor, as a courtesy, to confirm whether the proposed change has already been discussed with the XCALibre.jl development team.
 

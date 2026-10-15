@@ -222,6 +222,160 @@ def added_dependencies(root: Path, base_ref: str) -> list[str]:
     return sorted(current - base)
 
 
+JULIA_KEYWORDS = {
+    "begin", "end", "function", "struct", "mutable", "macro", "module", "return", "if", "else",
+    "elseif", "for", "while", "let", "do", "try", "catch", "finally", "where", "const", "local",
+    "global", "using", "import", "export", "abstract", "primitive", "type", "quote", "true", "false",
+    "nothing", "in", "isa",
+}
+DEFINITION_PATTERNS = (
+    re.compile(r"^\s*(?:@\w+\s+)*function\s+(?:[\w.]+\.)?([A-Za-z_]\w*!?)"),
+    re.compile(r"^\s*(?:@\w+\s+)*(?:mutable\s+)?struct\s+([A-Za-z_]\w*)"),
+    re.compile(r"^\s*(?:@\w+\s+)*abstract\s+type\s+([A-Za-z_]\w*)"),
+    re.compile(r"^\s*macro\s+([A-Za-z_]\w*)"),
+    re.compile(r"^\s*(?:@\w+\s+)*(?:[\w.]+\.)?([A-Za-z_]\w*!?)\s*\([^=]*\)\s*(?:where\s+.*)?=(?!=)"),
+)
+DISPATCH_PATTERN = re.compile(r"\{\s*([A-Z]\w*)\s*\}")
+PROPAGATION_STATUSES = {"fixed", "not-affected"}
+DEFERRAL_PATTERNS = (
+    r"\bnot\s+(?:covered|fixed|changed|handled|addressed|updated|propagated)\s+(?:by|in|here)\b",
+    r"\bnot\s+changed\s+here\b",
+    r"\blimitations?\b",
+    r"\bfollow[- ]?up\b",
+    r"\bfuture\s+(?:pr|pull\s+request|work|change)\b",
+    r"\bleft\s+(?:for|as)\s+(?:later|future|a\s+separate)\b",
+    r"\bseparate\s+(?:pr|pull\s+request)\b",
+    r"\bout\s+of\s+scope\b",
+    r"\bnot\s+yet\s+(?:supported|fixed|handled|implemented)\b",
+    r"\bstill\s+(?:uses|applies|has|lacks)\b",
+    r"\bTODO\b",
+)
+
+
+def definition_name(line: str) -> str | None:
+    for pattern in DEFINITION_PATTERNS:
+        match = pattern.match(line)
+        if match and match.group(1) not in JULIA_KEYWORDS:
+            return match.group(1)
+    return None
+
+
+def enclosing_definition(lines: list[str], index: int) -> str | None:
+    # nearest definition at or above the line whose indentation does not exceed the line's
+    indent = len(lines[index]) - len(lines[index].lstrip())
+    for cursor in range(index, -1, -1):
+        text = lines[cursor]
+        if not text.strip():
+            continue
+        name = definition_name(text)
+        if name and len(text) - len(text.lstrip()) <= indent:
+            return name
+    return None
+
+
+def changed_symbols(root: Path, base_ref: str) -> dict[str, set[str]]:
+    """Functions, types and dispatch types that a source change touches, per changed file."""
+    output = git(root, "diff", "--unified=0", f"{base_ref}...HEAD", "--", "src/*.jl", "src/**/*.jl")
+    symbols: dict[str, set[str]] = {}
+    current: str | None = None
+    lines: list[str] = []
+    for line in output.splitlines():
+        if line.startswith("+++ "):
+            current = line[6:] if line.startswith("+++ b/") else None
+            path = root / current if current else None
+            lines = path.read_text(encoding="utf-8").splitlines() if path and path.is_file() else []
+            if current:
+                symbols.setdefault(current, set())
+        elif current and line.startswith("@@"):
+            match = re.search(r"\+(\d+)(?:,(\d+))?", line)
+            if match:
+                start, count = int(match.group(1)), int(match.group(2) or "1")
+                for number in range(start, start + count):
+                    if 0 < number <= len(lines):
+                        name = enclosing_definition(lines, number - 1)
+                        if name:
+                            symbols[current].add(name)
+        elif current and line[:1] in "+-" and not line.startswith(("+++", "---")):
+            text = line[1:]
+            if text.lstrip().startswith("#"):
+                continue
+            name = definition_name(text)
+            if name:
+                symbols[current].add(name)
+            if name or "::" in text or "where" in text:
+                symbols[current].update(
+                    m for m in DISPATCH_PATTERN.findall(text) if m not in JULIA_KEYWORDS
+                )
+    return symbols
+
+
+def reference_sites(root: Path, symbols: set[str]) -> dict[str, set[str]]:
+    """Files under src/, test/, docs/ and examples/ that reference any of the symbols."""
+    sites: dict[str, set[str]] = {}
+    for symbol in sorted(symbols):
+        found = command(
+            ["git", "grep", "-l", "-w", "-F", symbol, "--", "src", "test", "docs", "examples"], root
+        )
+        for path in found.stdout.splitlines():
+            if path:
+                sites.setdefault(path, set()).add(symbol)
+    return sites
+
+
+def sibling_sources(root: Path, files: list[str]) -> set[str]:
+    """Other Julia sources next to each changed source file (parallel implementations)."""
+    siblings: set[str] = set()
+    for relative in files:
+        path = Path(relative)
+        if path.suffix != ".jl" or not relative.startswith("src/"):
+            continue
+        folder = root / path.parent
+        if folder.is_dir():
+            siblings.update(
+                str((path.parent / other.name).as_posix())
+                for other in folder.iterdir()
+                if other.suffix == ".jl" and other.name != path.name
+            )
+    return siblings
+
+
+def propagation_rows(path: Path) -> tuple[dict[str, tuple[str, str]], list[str]]:
+    """Rows `| path[:line] | fixed or not-affected | reason |` of a propagation manifest."""
+    rows: dict[str, tuple[str, str]] = {}
+    problems: list[str] = []
+    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        cells = [cell.strip().strip("`") for cell in line.strip().strip("|").split("|")]
+        if len(cells) < 2 or not line.lstrip().startswith("|") or set(cells[0]) <= set("-: "):
+            continue
+        if cells[0].lower() in {"site", "file", "path"}:
+            continue
+        site = cells[0].split(":", 1)[0]
+        status = cells[1].lower()
+        reason = cells[2] if len(cells) > 2 else ""
+        if status not in PROPAGATION_STATUSES:
+            problems.append(f"line {number}: {site} has status '{cells[1]}' (only fixed or not-affected)")
+        elif status == "not-affected" and len(reason) < 15:
+            problems.append(f"line {number}: {site} is not-affected without a reason")
+        rows[site] = (status, reason)
+    return rows, problems
+
+
+def deferral_hits(text: str) -> list[str]:
+    hits: list[tuple[int, str]] = []
+    for pattern in DEFERRAL_PATTERNS:
+        for match in re.finditer(pattern, text, flags=re.IGNORECASE):
+            start = max(0, match.start() - 40)
+            hits.append((match.start(), "…" + " ".join(text[start:match.end() + 40].split()) + "…"))
+    hits.sort()
+    kept: list[str] = []
+    last = -100
+    for position, snippet in hits:
+        if position - last > 40:
+            kept.append(snippet)
+            last = position
+    return kept
+
+
 def pull_request_description(
     root: Path,
     remote: str,
@@ -377,7 +531,7 @@ def preflight(arguments: argparse.Namespace) -> int:
     confirmed = set(arguments.confirm)
     if "all" in confirmed:
         confirmed.update(
-            {"theme", "description", "self-contained", "documentation", "example", "docstrings", "dependencies", "propagation", "grids", "identity"}
+            {"theme", "description", "self-contained", "documentation", "example", "docstrings", "dependencies", "propagation-manifest", "grids", "identity"}
         )
 
     def record(label: str, status: str, detail: str) -> None:
@@ -680,12 +834,75 @@ def preflight(arguments: argparse.Namespace) -> int:
     else:
         record("Added dependencies", "PASS", "none")
 
-    if any(Path(path).suffix.lower() == ".jl" for path in files):
-        review(
-            "propagation",
-            "Common function propagation",
-            "confirm changes to common or base functions are propagated to every affected caller, test, and document",
+    source_changes = [path for path in files if path.startswith("src/") and path.endswith(".jl")]
+    if confirmed & {"propagation"}:
+        print("[NOTE] --confirm propagation is no longer accepted; the propagation gate needs --propagation-file")
+    if not source_changes:
+        record("Propagation", "PASS", "no source changes under src/")
+    else:
+        try:
+            symbols_by_file = changed_symbols(root, base_ref)
+            symbols = set().union(*symbols_by_file.values()) if symbols_by_file else set()
+            references = reference_sites(root, symbols)
+            siblings = sibling_sources(root, source_changes)
+            candidates = (set(references) | siblings) - set(files)
+            print("  changed symbols: " + (", ".join(sorted(symbols)) or "none detected"))
+            if not arguments.propagation_file:
+                record(
+                    "Propagation",
+                    "FAIL",
+                    f"{len(candidates)} candidate site(s) outside the diff; write a propagation manifest and pass "
+                    "--propagation-file (rows `| path[:line] | fixed or not-affected | reason |`)",
+                )
+                for path in sorted(candidates):
+                    via = ", ".join(sorted(references.get(path, set()))) or "sibling of a changed source"
+                    print(f"    - {path} ({via})")
+            else:
+                manifest = Path(arguments.propagation_file)
+                if not manifest.is_absolute():
+                    manifest = root / manifest
+                if not manifest.is_file():
+                    raise RuntimeError(f"propagation manifest not found: {manifest}")
+                if manifest.resolve().is_relative_to(root.resolve()) and str(
+                    manifest.resolve().relative_to(root.resolve()).as_posix()
+                ) in files:
+                    record("Propagation", "FAIL", "the propagation manifest is committed; keep it out of the PR")
+                rows, problems = propagation_rows(manifest)
+                missing = sorted(path for path in candidates if path not in rows)
+                fixed_elsewhere = sorted(
+                    path for path, (status, _) in rows.items() if status == "fixed" and path not in files
+                )
+                if problems or missing or fixed_elsewhere:
+                    detail = []
+                    if missing:
+                        detail.append(f"{len(missing)} candidate site(s) not in the manifest: " + ", ".join(missing[:25])
+                                      + (f" (+{len(missing) - 25} more)" if len(missing) > 25 else ""))
+                    if fixed_elsewhere:
+                        detail.append("marked fixed but unchanged in the diff: " + ", ".join(fixed_elsewhere))
+                    detail.extend(problems)
+                    record("Propagation", "FAIL", "; ".join(detail))
+                else:
+                    review(
+                        "propagation-manifest",
+                        "Propagation",
+                        f"{len(candidates)} candidate site(s) all accounted for in {manifest.name}; confirm each "
+                        "not-affected reason holds and that parallel paths the search cannot see (other solvers, "
+                        "equations, backends, distributed and restart paths, docs, examples) are covered",
+                    )
+        except RuntimeError as error:
+            record("Propagation", "FAIL", str(error))
+
+    deferrals = deferral_hits(description_body)
+    if changelog.is_file() and number is not None:
+        deferrals += deferral_hits("\n".join(text for _, text in changelog_lines(changelog, number)))
+    if deferrals:
+        record(
+            "Deferred work",
+            "FAIL",
+            "the description or CHANGELOG defers affected work instead of propagating it: " + " | ".join(deferrals[:10]),
         )
+    else:
+        record("Deferred work", "PASS", "no affected work is deferred in the description or CHANGELOG")
 
     if arguments.skip_tests:
         record("Package tests", "SKIP", "explicitly skipped")
@@ -732,10 +949,14 @@ def parser() -> argparse.ArgumentParser:
     check.add_argument("--changelog", default="CHANGELOG.md")
     check.add_argument("--feature", action="store_true", help="require changed tests and documentation")
     check.add_argument(
+        "--propagation-file",
+        help="propagation manifest listing every candidate site as fixed or not-affected (kept out of the PR)",
+    )
+    check.add_argument(
         "--confirm",
         action="append",
         default=[],
-        choices=("theme", "description", "self-contained", "documentation", "example", "docstrings", "dependencies", "propagation", "grids", "identity", "all"),
+        choices=("theme", "description", "self-contained", "documentation", "example", "docstrings", "dependencies", "propagation", "propagation-manifest", "grids", "identity", "all"),
         help="record a completed judgement-based review; repeat as needed",
     )
     check.add_argument("--skip-tests", action="store_true", help="skip the local Julia package test")

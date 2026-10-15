@@ -14,7 +14,7 @@ AI-generated review of an XCALibre.jl contribution. Gate on scope first; review 
    - which changes belong to which theme
    - a proposed split into separate branches/PRs, one theme each
    - a recommendation to prepare each split contribution with `xcalibre-dev` → `xcalibre-close` → `xcalibre-pr`
-3. Otherwise, carry every other FAIL/REVIEW preflight item (tests, changelog, docs, examples, comments, dependencies, licences, authorship, AI disclosure) into the final report as open items, and continue to the review.
+3. Otherwise, carry every other FAIL/REVIEW preflight item (propagation, tests, changelog, docs, examples, comments, dependencies, licences, authorship, AI disclosure) into the final report as open items, and continue to the review. In the review itself, report every parallel code path that keeps the old behaviour (another solver, equation, solve path, backend or document) as a correctness finding.
 
 ## 1. Code review
 
