@@ -14,7 +14,7 @@ Prepare a focused, current, tested pull request that follows XCALibre.jl contrib
 3. Confirm no development-vault file (`dev/`, including `dev/archive/` and `dev/features/`) is in the pull request; preflight fails when one is. Untrack it with `git rm -r --cached dev`, keep `/dev/` in `.git/info/exclude` rather than the project's `.gitignore`, and never stage it.
 4. Review the reported commits and changed files. Pass the single-theme check only when every change serves one coherent purpose; otherwise split the work into separate branches and pull requests.
 5. Use the actual assigned pull-request number for the final changelog check. `next-number` is only a prediction: GitHub issues and pull requests share a sequence, and concurrent activity can claim that number.
-6. Confirm `CHANGELOG.md` contains one or more relevant bullet items referencing `[#<number>]` or `[#<number>](@ref)`.
+6. Confirm `CHANGELOG.md` contains one or more relevant bullet items referencing `[#<number>]` or `[#<number>](@ref)`. Keep each item to at most two sentences: the changelog is a plain list of changes, and the linked pull request carries the full description, rationale, measurements and details. Preflight fails when an item exceeds two sentences.
 7. For new functionality, require relevant tests, documentation following the existing project convention, and a minimal example under `examples/`. Prefer an existing grid; accept a new one only when necessary and very small.
 8. Require a successful local `Pkg.test()` run before submission. Exit code `0` means all automated checks passed; `1` means failure; `2` means a review or skipped test remains unresolved.
 9. Confirm the pull-request description clearly explains what was added or changed.

@@ -504,6 +504,22 @@ def changelog_lines(path: Path, number: int) -> list[tuple[int, str]]:
     return matches
 
 
+CHANGELOG_MAX_SENTENCES = 2
+
+
+def sentence_count(text: str) -> int:
+    text = re.sub(r"^[*+-]\s+", "", text.strip())
+    text = re.sub(r"`[^`]*`", "code", text)
+    text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)
+    text = re.sub(r"\[#\d+\]", "", text)
+    text = re.sub(r"\b(?:e\.g|i\.e|etc|vs|cf|approx|Fig|Eq)\.", "abbr", text, flags=re.IGNORECASE)
+    text = text.strip()
+    if not text:
+        return 0
+    count = len(re.findall(r"[.!?]+(?=\s|$)", text))
+    return count if re.search(r"[.!?]$", text) else count + 1
+
+
 def result(label: str, status: str, detail: str) -> bool:
     print(f"[{status}] {label}: {detail}")
     return status == "PASS"
@@ -671,6 +687,20 @@ def preflight(arguments: argparse.Namespace) -> int:
                 record("Changelog", "PASS", f"{len(lines)} item(s) reference #{number}")
                 for line_number, text in lines:
                     print(f"  {arguments.changelog}:{line_number}: {text}")
+                long_items = [
+                    f"{arguments.changelog}:{line_number} ({sentence_count(text)} sentences)"
+                    for line_number, text in lines
+                    if sentence_count(text) > CHANGELOG_MAX_SENTENCES
+                ]
+                if long_items:
+                    record(
+                        "Changelog length",
+                        "FAIL",
+                        f"items exceed {CHANGELOG_MAX_SENTENCES} sentences; state the change briefly and move "
+                        "details to the pull-request description: " + ", ".join(long_items),
+                    )
+                else:
+                    record("Changelog length", "PASS", f"every item is at most {CHANGELOG_MAX_SENTENCES} sentences")
             else:
                 record("Changelog", "FAIL", f"no item references #{number}")
 
