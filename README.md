@@ -132,6 +132,8 @@ codex plugin add xcalibre-skills@xcalibre-skills
 
 Claude Code can perform updates automatically when marketplace auto-update is enabled. Start a new Codex thread after updating so the revised skills are loaded.
 
+An update is offered only when the plugin version has increased, so every release raises it (see [Versioning](#versioning)).
+
 ## Development installation
 
 Clone the repository only when editing or validating the skill collection locally:
@@ -172,6 +174,8 @@ xcalibre-skills/
 |           |-- xcalibre-mesh-types/
 |           |-- xcalibre-pr/
 |           `-- xcalibre-review/
+|-- scripts/
+|   `-- check_plugin_version.py
 `-- README.md
 ```
 
@@ -179,8 +183,21 @@ xcalibre-skills/
 - `.agents/plugins/marketplace.json` is the Codex marketplace catalogue.
 - `plugins/xcalibre-skills/` is the shared plugin payload.
 - Each directory under `plugins/xcalibre-skills/skills/` is an independently selectable skill.
+- `scripts/check_plugin_version.py` checks the plugin version; the `Plugin version` GitHub check runs it on every pull request.
 
 A `src/` directory is not required. These packages are declarative skills rather than a compiled library, and both plugin formats expect their distributable skill content inside the plugin directory.
+
+## Versioning
+
+The plugin follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html). The version is set in both `plugins/xcalibre-skills/.claude-plugin/plugin.json` and `plugins/xcalibre-skills/.codex-plugin/plugin.json`, and the two must match.
+
+Every pull request that changes `plugins/` raises the version once: PATCH for fixes and wording, MINOR for new skills or compatible new behaviour, MAJOR for breaking changes (MINOR while the version is 0.x). Check it before opening a pull request:
+
+```bash
+python3 scripts/check_plugin_version.py origin/main
+```
+
+The full rule is in `AGENTS.md`.
 
 ## Development principles
 
