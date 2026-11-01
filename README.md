@@ -14,9 +14,9 @@ Install the plugin (see below), then talk to your agent normally. You do not nee
 | "Pick up where we left off." | Reads the journal and Git state, restarts the progress check and continues from the recorded next step. | `xcalibre-dev` |
 | "The feature is done, wrap it up." | Tidies examples, comments and leftovers, archives the journal and runs the full test gate. | `xcalibre-close` |
 | "Open a PR for this feature." | Checks the branch against the project's PR rules, fixes or reports what is missing, and opens the PR from your GitHub account. | `xcalibre-pr` |
-| "Review PR 123." | Checks the PR rules, then reviews the code for architecture, CPU/GPU/MPI coverage, performance and correctness. | `xcalibre-review` |
+| "Review PR 123." | Checks the PR rules and reviews the code for architecture, CPU/GPU/MPI coverage, performance and correctness, then posts the required changes inline from your GitHub account once you confirm. | `xcalibre-review` |
 
-You can still call a skill by name, for example `/xcalibre-skills:xcalibre-pr` in Claude Code or `$xcalibre-pr` in Codex. Commits, pushes, pull requests and posted review comments always need your go-ahead.
+You can still call a skill by name, for example `/xcalibre-skills:xcalibre-pr` in Claude Code or `$xcalibre-pr` in Codex. Commits, pushes, pull requests and review comments are always made from your own GitHub account, and only with your go-ahead.
 
 ## How the skills work
 
@@ -44,11 +44,11 @@ Prepares a PR that meets the XCALibre.jl rules, using a preflight script that re
 
 ### `xcalibre-review`: reviews
 
-An AI review that a human maintainer then confirms.
+A review posted from your own GitHub account; a maintainer still does the final review and merge.
 
 1. **PR rules:** runs the `xcalibre-pr` preflight; if the PR mixes themes, it proposes a split instead of reviewing.
 2. **Code:** checks that the change follows the existing XCALibre.jl API and architecture, works on CPU, GPU and MPI-distributed meshes, and has no obvious performance problems: allocations in solver loops (costly on GPU), type instability, temporary arrays, extra kernel launches or host–GPU transfers. It also points out clear chances to cut allocations or time.
-3. **Report:** a short list of verified findings, most severe first, plus any open PR-rule items.
+3. **Post:** each required change goes inline on the lines it concerns, plus a short summary ending with an AI-assistance line. Everything is posted as you, never as a bot or AI account, and only after you confirm.
 
 ### `xcalibre-close`: wrapping up a feature
 
