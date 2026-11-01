@@ -438,6 +438,30 @@ def openfoam_terms(body: str) -> list[str]:
     return found
 
 
+# Other codes, and phrasing that justifies a change by what another code does rather than by its
+# mathematics or measured performance.
+EXTERNAL_CODE_TERMS = (
+    re.compile(
+        r"\b(?:Fluent|STAR-?CCM\+?|CFX|SU2|Code_Saturne|Nek5000|NekRS|PyFR|COMSOL|CONVERGE|Basilisk"
+        r"|Gerris|FEniCS|Trixi(?:\.jl)?|WaterLily(?:\.jl)?|Oceananigans(?:\.jl)?|caffa3d|HiFiLES)\b"
+    ),
+    re.compile(
+        r"(?i)\b(?:as (?:done|implemented|used) (?:in|by)|(?:the )?same (?:way|approach) as"
+        r"|following (?:the )?(?:implementation|approach) (?:in|of)"
+        r"|(?:other|commercial|established|reference|mature) (?:CFD )?(?:codes?|solvers?|packages?|software))\b"
+    ),
+)
+
+
+def external_code_terms(body: str) -> list[str]:
+    found: list[str] = []
+    for pattern in EXTERNAL_CODE_TERMS:
+        for match in pattern.finditer(body):
+            if match.group(0) not in found:
+                found.append(match.group(0))
+    return found
+
+
 # Detail that ties a change to how it was developed rather than to XCALibre.jl itself: named CPU or
 # GPU models, cluster and scheduler details, local paths, and benchmark cases absent from the code base.
 HARDWARE_TERMS = re.compile(
@@ -483,7 +507,8 @@ def changed_text_hits(
                 continue
             line = lines[number - 1]
             # OpenFOAM names the code base already uses (its mesh reader, writer, grids) are its own
-            terms = [t for t in openfoam_terms(line) if t not in base_terms] + environment_terms(line, tracked)
+            terms = [t for t in openfoam_terms(line) + external_code_terms(line) if t not in base_terms]
+            terms += environment_terms(line, tracked)
             if terms:
                 hits.append(f"{relative}:{number} ({', '.join(terms)})")
     return hits
@@ -492,7 +517,7 @@ def changed_text_hits(
 def base_openfoam_terms(root: Path, base_ref: str) -> set[str]:
     listed = command(["git", "grep", "-h", "-I", "-E", "-o", r"[A-Za-z_][A-Za-z0-9_]*", base_ref, "--", "src"], root)
     words = set(listed.stdout.split()) if listed.returncode == 0 else set()
-    return {term for term in words if openfoam_terms(term)}
+    return {term for term in words if openfoam_terms(term) or external_code_terms(term)}
 
 
 CHANGELOG_CATEGORIES = ("added", "changed", "fixed", "breaking", "deprecated", "removed")
@@ -516,6 +541,13 @@ def bad_changelog_entry(text: str) -> bool:
 
 
 CHANGELOG_MAX_SENTENCES = 2
+CHANGELOG_MAX_WORDS = 30
+
+
+def word_count(text: str) -> int:
+    text = re.sub(r"`[^`]*`", "code", text)
+    text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)
+    return len(re.findall(r"[A-Za-z0-9]\S*", text))
 
 
 def sentence_count(text: str) -> int:
@@ -671,8 +703,9 @@ def preflight(arguments: argparse.Namespace) -> int:
         review(
             "self-contained",
             "Self-contained changes",
-            "confirm added source, comments, docstrings, documentation and changelog entries name no OpenFOAM "
-            "lingo or justification, no case outside XCALibre.jl, and no specific machine, cluster or path"
+            "confirm added source, comments, docstrings, documentation and changelog entries use no OpenFOAM "
+            "lingo, justify nothing by what another code does, name no case outside XCALibre.jl, and no "
+            "specific machine, cluster or path"
             + (f"; flagged: {'; '.join(hits[:20])}" + (f" (+{len(hits) - 20} more)" if len(hits) > 20 else "") if hits else ""),
         )
     except RuntimeError as error:
@@ -718,20 +751,22 @@ def preflight(arguments: argparse.Namespace) -> int:
             record("Changelog", "PASS", f"{len(entries)} entry(ies) in " + ", ".join(files_with_entries))
         if len(files_with_entries) > 1:
             record("Changelog", "REVIEW", "use one entry file per pull request: " + ", ".join(files_with_entries))
-        long_items = [
-            f"{path}:{line_number} ({sentence_count(text)} sentences)"
-            for path, line_number, text in entries
-            if sentence_count(re.sub(r"^[*-]\s+\w+:\s*", "", text)) > CHANGELOG_MAX_SENTENCES
-        ]
+        long_items = []
+        for path, line_number, text in entries:
+            body = re.sub(r"^[*-]\s+\w+:\s*", "", text)
+            sentences, words = sentence_count(body), word_count(body)
+            if sentences > CHANGELOG_MAX_SENTENCES or words > CHANGELOG_MAX_WORDS:
+                long_items.append(f"{path}:{line_number} ({sentences} sentences, {words} words)")
+        limit = f"{CHANGELOG_MAX_SENTENCES} sentences and {CHANGELOG_MAX_WORDS} words"
         if long_items:
             record(
                 "Changelog length",
                 "FAIL",
-                f"items exceed {CHANGELOG_MAX_SENTENCES} sentences; state the change briefly and move "
+                f"items exceed {limit}; the changelog is a ledger of changes, so state the change and move "
                 "details to the pull-request description: " + ", ".join(long_items),
             )
         else:
-            record("Changelog length", "PASS", f"every item is at most {CHANGELOG_MAX_SENTENCES} sentences")
+            record("Changelog length", "PASS", f"every item is within {limit}")
 
     description_body = ""
     pr_author: str | None = None
@@ -757,14 +792,16 @@ def preflight(arguments: argparse.Namespace) -> int:
             )
             terms = openfoam_terms(description_body)
             flagged = f"; possible OpenFOAM terms: {', '.join(terms)}" if terms else ""
+            external = external_code_terms(description_body)
+            flagged += f"; possible appeal to another code: {', '.join(external)}" if external else ""
             specific = environment_terms(description_body, tracked_paths)
             flagged += f"; possible environment-specific detail: {', '.join(specific)}" if specific else ""
             review(
                 "self-contained",
                 "Self-contained description",
-                "confirm the description uses no OpenFOAM lingo or justification, cites no case, run or data "
-                "outside XCALibre.jl, describes hardware generically (sockets, cores, NUMA domains, GPU class) "
-                "and explains numerics changes by their mathematics" + flagged,
+                "confirm the description uses no OpenFOAM lingo, justifies changes by their mathematics or measured "
+                "performance and never by what another code does, cites no case, run or data outside XCALibre.jl, "
+                "and describes hardware generically (sockets, cores, NUMA domains, GPU class)" + flagged,
             )
     except RuntimeError as error:
         record("PR description", "FAIL", str(error))
