@@ -4,38 +4,78 @@ Reusable agent skills for developing, configuring, validating and documenting co
 
 The repository is packaged as one marketplace plugin for Claude Code and Codex. Both platforms load the same platform-neutral skill sources.
 
-## Available skills
+## Quick start
 
-| Skill | Description and use |
+Install the plugin (see below), then talk to your agent normally. You do not need to name a skill.
+
+| You say | What happens | Skill |
+|---|---|---|
+| "I'm starting a new feature in XCALibre.jl that adds…" | Creates a feature branch, sets up a small journal in `dev/`, starts a 50-minute progress check, then gets on with the work. | `xcalibre-dev` |
+| "Pick up where we left off." | Reads the journal and Git state, restarts the progress check and continues from the recorded next step. | `xcalibre-dev` |
+| "The feature is done, wrap it up." | Tidies examples, comments and leftovers, archives the journal and runs the full test gate. | `xcalibre-close` |
+| "Open a PR for this feature." | Checks the branch against the project's PR rules, fixes or reports what is missing, and opens the PR from your GitHub account. | `xcalibre-pr` |
+| "Review PR 123." | Checks the PR rules and reviews the code for architecture, CPU/GPU/MPI coverage, performance and correctness, then posts the required changes inline from your GitHub account once you confirm. | `xcalibre-review` |
+
+You can still call a skill by name, for example `/xcalibre-skills:xcalibre-pr` in Claude Code or `$xcalibre-pr` in Codex. Commits, pushes, pull requests and review comments are always made from your own GitHub account, and only with your go-ahead.
+
+## How the skills work
+
+### `xcalibre-dev`: development sessions
+
+Keeps a development session recoverable if it crashes or the machine restarts, and lets you see at a glance where the work is heading.
+
+- **Three small files in `dev/`**, never committed (`dev/` is added to `.git/info/exclude`):
+  - `STATUS.md`: goal, branch, what is happening now, the exact next step, questions for you and running agents. Rewritten in place, at most 40 lines. Read this to see where things stand.
+  - `journal.md`: one timestamped line per event, such as a direction chosen, an idea refuted or a commit landed.
+  - `runs.jsonl`: one line per trial with its numbers, easy to filter with `runs <pattern>` or `jq`.
+- **Size limits:** the journal and runs files move to `dev/archive/` when full; raw logs and dumps are not kept. Scripts worth re-running go in `dev/scripts/`.
+- **50-minute check:** every 50 minutes the agent updates `STATUS.md`, asks any running agents for progress and tells you if work has stalled.
+- **Your commits:** every commit is made under your own Git identity, never an agent's, with no AI co-author lines; `init` and `resume` warn if the identity or a commit on the branch breaks this.
+- **Light touch:** it records the work; it does not tell the agent how to do it.
+
+### `xcalibre-pr`: pull requests
+
+Prepares a PR that meets the XCALibre.jl rules, using a preflight script that reports each check as pass, fail or needs review.
+
+- **One theme per PR.** Unrelated changes are split into separate PRs.
+- **Changelog:** never edit `CHANGELOG.md`. Add one file per PR, `changelog/unreleased/<branch-name>.md`, with lines such as `* fixed: Corrects the wall-flux sign in the energy equation.` Each item is at most two sentences and 30 words; the PR description carries the detail.
+- **Self-contained:** descriptions, docs and comments justify a change by its mathematics or measured performance, never by what another code does. They cite no case, data or hardware outside XCALibre.jl.
+- **Complete:** a fix or feature reaches every solver, backend and code path that shares the behaviour; it comes with tests, docs and an example where needed, and a passing `Pkg.test()`.
+- **Authorship:** the PR is opened from the contributor's own account and ends with an AI-assistance line.
+
+### `xcalibre-review`: reviews
+
+A review posted from your own GitHub account; a maintainer still does the final review and merge.
+
+1. **PR rules:** runs the `xcalibre-pr` preflight; if the PR mixes themes, it proposes a split instead of reviewing.
+2. **Code:** checks that the change follows the existing XCALibre.jl API and architecture, works on CPU, GPU and MPI-distributed meshes, and has no obvious performance problems: allocations in solver loops (costly on GPU), type instability, temporary arrays, extra kernel launches or host–GPU transfers. It also points out clear chances to cut allocations or time.
+3. **Post:** each required change goes inline on the lines it concerns, plus a short summary ending with an AI-assistance line. Everything is posted as you, never as a bot or AI account, and only after you confirm.
+
+### `xcalibre-close`: wrapping up a feature
+
+Before the PR, it turns the dev journal into a short archive note (what was built, what failed), rewrites examples so they read as examples, trims comments, deletes leftovers and runs the full test gate. It then hands over to `xcalibre-pr`.
+
+### Guidance skills
+
+These load on their own when the work needs them:
+
+| Skill | Use |
 |---|---|
-| `xcalibre-skills` | Umbrella entry point for the collection. Use it for general XCALibre.jl work or when the appropriate specialist skill is not known. It selects and loads only the relevant specialist guidance, and never auto-invokes the direct-invocation skills below. |
-| `julia-benchmarking` | Separates compilation, allocation, data movement and warmed steady-state runtime. Use it to design or review Julia benchmarks and compare CPU or GPU implementations. |
-| `xcalibre-kernels` | Applies XCALibre.jl conventions for fused field loops and `KernelAbstractions.jl` kernels. Use it when adding, reviewing or refactoring backend-independent field operations. |
-| `xcalibre-mesh-types` | Preserves type stability for meshes, cells, faces and mesh-derived values. Use it when code must support different floating-point and integer mesh types. |
-| `xcalibre-dev` *(direct invocation only)* | Maintains a persistent context vault for substantial features, phases, refactors and debugging campaigns, recoverable across sessions. The vault (`dev/`) is its own Git repository with an optional private GitHub remote, excluded from the project so it never enters a pull request. Several features can be developed at once, each on its own project branch: `dev/features/INDEX.md` binds every feature vault to its branch, and `resume` and `plan` follow whichever branch is checked out. Operations: `doctor`, `init [--feature <slug> [--branch <name>]] [--remote]`, `sync`, `plan <milestone-id> <slug>`, `resume [--full]`, `check`, `migrate [--apply]`. |
-| `xcalibre-close` *(direct invocation only)* | Consolidates and cleans development records, examples, documentation and generated evidence at phase or feature close. Runs the `xcalibre-pr` preflight checks but does not submit a pull request. |
-| `xcalibre-pr` *(direct invocation only)* | Checks and prepares an XCALibre.jl contribution for submission: branch synchronisation, scope, propagation of the change through the whole code base (a hard gate with a manifest of every affected site), changelog entries, tests, documentation, examples, comments, dependencies, licences, authorship and AI disclosure. Operations: `preflight [--pr-number <n>] [--propagation-file <manifest>] [--confirm <review>]`, `next-number`. Corrective and submission actions require user consent. |
-| `xcalibre-review` *(direct invocation only)* | AI review of an XCALibre.jl pull request or diff. Gates on single-theme scope (via `xcalibre-pr`'s preflight) before reviewing correctness, style, and GPU/`KernelAbstractions.jl` compatibility. Call syntax: `xcalibre-review [target] [level] [--comment] [--fix]`, matching `code-review`. Marks output as AI-generated; a human performs the final review and merge. |
+| `xcalibre-skills` | Umbrella entry point that routes to the right skill. |
+| `julia-benchmarking` | Measuring Julia performance, separating compilation, allocation, data movement and runtime. |
+| `xcalibre-kernels` | Writing CPU/GPU kernels and fused field loops in the XCALibre.jl style. |
+| `xcalibre-mesh-types` | Keeping mesh code type-stable across float and integer types. |
 
-Skills marked *(direct invocation only)* are never selected automatically by `xcalibre-skills` or the agent — invoke them explicitly by name.
-
-## First run and requirements
-
-The guidance skills (`xcalibre-skills`, `julia-benchmarking`, `xcalibre-kernels`, `xcalibre-mesh-types`) need nothing beyond the agent. The workflow skills (`xcalibre-dev`, `xcalibre-close`, `xcalibre-pr`, `xcalibre-review`) run local tools. The first time you invoke `xcalibre-dev`, the agent:
-
-1. Runs `xcalibre-dev doctor` to check the tools below.
-2. If anything is missing, asks you **once** to approve installing it and creating a private vault repository on your GitHub account. Nothing is installed or created without that approval.
-3. Installs what you approved with your platform's package manager (`apt` on Linux, `brew` on macOS, `winget` on Windows), and runs `gh auth login` if you are not signed in to GitHub.
-4. Runs `xcalibre-dev init --remote`. This creates the vault in `dev/` as its own Git repository and excludes `dev/` from your project through `.git/info/exclude`, so vault files never appear in your commits or pull requests. It then creates a **private** GitHub repository, `<your-account>/<project>-dev-vault`, and pushes the vault to it. If that repository already exists (for example, when you work on another machine), `init --remote` clones it instead.
+## Requirements
 
 | Tool | Needed for |
 |---|---|
-| Python ≥ 3.9 | Every workflow skill script. Install it yourself if it is missing, because `doctor` itself runs on Python. |
-| Git | The project repository and the vault repository. |
-| GitHub CLI (`gh`), signed in | Creating and cloning the private vault repository, and the `xcalibre-pr` authorship checks. |
-| Julia | Running `Pkg.test()` in `xcalibre-pr` preflight. |
+| Python ≥ 3.9 | The workflow skill scripts. |
+| Git | The project repository. |
+| GitHub CLI (`gh`), signed in | Opening PRs and the authorship checks. |
+| Julia | Running `Pkg.test()` before a PR. |
 
-Already using `xcalibre-dev`? Your existing `dev/` is adopted without changing any record. `resume` checks that `dev/` is excluded from the project. If your project still tracks vault files, `resume` tells you to run `git rm -r --cached dev` and commit, which stops tracking them without deleting them.
+Used the earlier `xcalibre-dev` vault? `resume` lists its files; fold anything still live into `dev/STATUS.md` and move the rest to `dev/archive/`.
 
 ## Install in Claude Code
 
@@ -51,12 +91,7 @@ Install the plugin:
 /plugin install xcalibre-skills@xcalibre-skills
 ```
 
-Claude Code namespaces plugin skills with the plugin name. Examples:
-
-```text
-/xcalibre-skills:xcalibre-pr check this branch for PR readiness
-/xcalibre-skills:xcalibre-kernels review this kernel
-```
+Skills are picked up from what you ask (see **Quick start**). To call one by name, prefix it with the plugin name, for example `/xcalibre-skills:xcalibre-pr`.
 
 Use `/plugin` to inspect installed plugins and marketplace updates.
 
@@ -74,12 +109,7 @@ Install the plugin:
 codex plugin add xcalibre-skills@xcalibre-skills
 ```
 
-Restart Codex if the new skills do not appear immediately. Invoke a skill explicitly or allow Codex to select it for a matching task:
-
-```text
-$xcalibre-pr check this branch for PR readiness
-$xcalibre-kernels review this kernel
-```
+Restart Codex if the new skills do not appear immediately. Skills are picked up from what you ask; to call one by name, use `$xcalibre-pr` and so on.
 
 ## Update an existing installation
 
