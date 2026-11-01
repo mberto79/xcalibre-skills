@@ -1,6 +1,6 @@
 {
   "name": "xcalibre-skills",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Reusable skills for developing, validating and documenting XCALibre.jl workflows.",
   "author": {
     "name": "Humberto Medina",
