@@ -495,13 +495,24 @@ def base_openfoam_terms(root: Path, base_ref: str) -> set[str]:
     return {term for term in words if openfoam_terms(term)}
 
 
-def changelog_lines(path: Path, number: int) -> list[tuple[int, str]]:
-    marker = re.compile(rf"\[#{number}\](?:\(@ref\))?")
-    matches = []
-    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-        if marker.search(line):
-            matches.append((line_number, line.strip()))
-    return matches
+CHANGELOG_CATEGORIES = ("added", "changed", "fixed", "breaking", "deprecated", "removed")
+CHANGELOG_ENTRY = re.compile(r"^[*-]\s+(\w+):\s*\S")
+
+
+def changelog_entries(root: Path, base_ref: str, directory: str) -> list[tuple[str, int, str]]:
+    prefix = directory.rstrip("/") + "/"
+    entries = []
+    for path in changed_files(root, base_ref):
+        if path.startswith(prefix) and path.endswith(".md") and (root / path).is_file():
+            for line_number, line in enumerate((root / path).read_text(encoding="utf-8").splitlines(), 1):
+                if line.strip():
+                    entries.append((path, line_number, line.strip()))
+    return entries
+
+
+def bad_changelog_entry(text: str) -> bool:
+    match = CHANGELOG_ENTRY.match(text)
+    return match is None or match[1].lower() not in CHANGELOG_CATEGORIES
 
 
 CHANGELOG_MAX_SENTENCES = 2
@@ -547,7 +558,7 @@ def preflight(arguments: argparse.Namespace) -> int:
     confirmed = set(arguments.confirm)
     if "all" in confirmed:
         confirmed.update(
-            {"theme", "description", "self-contained", "documentation", "example", "docstrings", "dependencies", "propagation-manifest", "grids", "identity"}
+            {"theme", "description", "self-contained", "documentation", "example", "docstrings", "dependencies", "propagation-manifest", "grids", "identity", "changelog"}
         )
 
     def record(label: str, status: str, detail: str) -> None:
@@ -660,7 +671,7 @@ def preflight(arguments: argparse.Namespace) -> int:
         review(
             "self-contained",
             "Self-contained changes",
-            "confirm added source, comments, docstrings, documentation and CHANGELOG lines name no OpenFOAM "
+            "confirm added source, comments, docstrings, documentation and changelog entries name no OpenFOAM "
             "lingo or justification, no case outside XCALibre.jl, and no specific machine, cluster or path"
             + (f"; flagged: {'; '.join(hits[:20])}" + (f" (+{len(hits) - 20} more)" if len(hits) > 20 else "") if hits else ""),
         )
@@ -677,32 +688,50 @@ def preflight(arguments: argparse.Namespace) -> int:
         except RuntimeError as error:
             record("PR number", "FAIL", str(error))
 
-    changelog = root / arguments.changelog
-    if number is not None:
-        if not changelog.is_file():
-            record("Changelog", "FAIL", f"file not found: {changelog}")
+    changelog_dir = arguments.changelog_dir
+    entries: list[tuple[str, int, str]] = []
+    try:
+        entries = changelog_entries(root, base_ref, changelog_dir)
+        if "CHANGELOG.md" in changed_files(root, base_ref):
+            record("Changelog", "FAIL", f"CHANGELOG.md is edited; put entries in {changelog_dir}/<branch-name>.md instead")
+    except RuntimeError as error:
+        record("Changelog", "FAIL", str(error))
+    if not entries:
+        review(
+            "changelog",
+            "Changelog",
+            f"no entry in {changelog_dir}/; add one unless users would not notice the change",
+        )
+    else:
+        files_with_entries = sorted({path for path, _, _ in entries})
+        for path, line_number, text in entries:
+            print(f"  {path}:{line_number}: {text}")
+        malformed = [f"{path}:{line_number}" for path, line_number, text in entries if bad_changelog_entry(text)]
+        if malformed:
+            record(
+                "Changelog",
+                "FAIL",
+                "entries must read `* <category>: text` with category one of "
+                + ", ".join(CHANGELOG_CATEGORIES) + ": " + ", ".join(malformed),
+            )
         else:
-            lines = changelog_lines(changelog, number)
-            if lines:
-                record("Changelog", "PASS", f"{len(lines)} item(s) reference #{number}")
-                for line_number, text in lines:
-                    print(f"  {arguments.changelog}:{line_number}: {text}")
-                long_items = [
-                    f"{arguments.changelog}:{line_number} ({sentence_count(text)} sentences)"
-                    for line_number, text in lines
-                    if sentence_count(text) > CHANGELOG_MAX_SENTENCES
-                ]
-                if long_items:
-                    record(
-                        "Changelog length",
-                        "FAIL",
-                        f"items exceed {CHANGELOG_MAX_SENTENCES} sentences; state the change briefly and move "
-                        "details to the pull-request description: " + ", ".join(long_items),
-                    )
-                else:
-                    record("Changelog length", "PASS", f"every item is at most {CHANGELOG_MAX_SENTENCES} sentences")
-            else:
-                record("Changelog", "FAIL", f"no item references #{number}")
+            record("Changelog", "PASS", f"{len(entries)} entry(ies) in " + ", ".join(files_with_entries))
+        if len(files_with_entries) > 1:
+            record("Changelog", "REVIEW", "use one entry file per pull request: " + ", ".join(files_with_entries))
+        long_items = [
+            f"{path}:{line_number} ({sentence_count(text)} sentences)"
+            for path, line_number, text in entries
+            if sentence_count(re.sub(r"^[*-]\s+\w+:\s*", "", text)) > CHANGELOG_MAX_SENTENCES
+        ]
+        if long_items:
+            record(
+                "Changelog length",
+                "FAIL",
+                f"items exceed {CHANGELOG_MAX_SENTENCES} sentences; state the change briefly and move "
+                "details to the pull-request description: " + ", ".join(long_items),
+            )
+        else:
+            record("Changelog length", "PASS", f"every item is at most {CHANGELOG_MAX_SENTENCES} sentences")
 
     description_body = ""
     pr_author: str | None = None
@@ -923,16 +952,15 @@ def preflight(arguments: argparse.Namespace) -> int:
             record("Propagation", "FAIL", str(error))
 
     deferrals = deferral_hits(description_body)
-    if changelog.is_file() and number is not None:
-        deferrals += deferral_hits("\n".join(text for _, text in changelog_lines(changelog, number)))
+    deferrals += deferral_hits("\n".join(text for _, _, text in entries))
     if deferrals:
         record(
             "Deferred work",
             "FAIL",
-            "the description or CHANGELOG defers affected work instead of propagating it: " + " | ".join(deferrals[:10]),
+            "the description or changelog entries defer affected work instead of propagating it: " + " | ".join(deferrals[:10]),
         )
     else:
-        record("Deferred work", "PASS", "no affected work is deferred in the description or CHANGELOG")
+        record("Deferred work", "PASS", "no affected work is deferred in the description or changelog entries")
 
     if arguments.skip_tests:
         record("Package tests", "SKIP", "explicitly skipped")
@@ -976,7 +1004,7 @@ def parser() -> argparse.ArgumentParser:
     check.add_argument("--expected-author", help="GitHub login of the human contributor")
     check.add_argument("--ai-vendor", help="AI vendor disclosed in the PR description")
     check.add_argument("--ai-model", help="AI model disclosed in the PR description")
-    check.add_argument("--changelog", default="CHANGELOG.md")
+    check.add_argument("--changelog-dir", default="changelog/unreleased", help="directory of per-PR changelog entry files")
     check.add_argument("--feature", action="store_true", help="require changed tests and documentation")
     check.add_argument(
         "--propagation-file",
@@ -986,7 +1014,7 @@ def parser() -> argparse.ArgumentParser:
         "--confirm",
         action="append",
         default=[],
-        choices=("theme", "description", "self-contained", "documentation", "example", "docstrings", "dependencies", "propagation", "propagation-manifest", "grids", "identity", "all"),
+        choices=("theme", "description", "self-contained", "documentation", "example", "docstrings", "dependencies", "propagation", "propagation-manifest", "grids", "identity", "changelog", "all"),
         help="record a completed judgement-based review; repeat as needed",
     )
     check.add_argument("--skip-tests", action="store_true", help="skip the local Julia package test")
