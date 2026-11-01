@@ -1,6 +1,6 @@
 ---
 name: xcalibre-dev
-description: Light-touch session journal for XCALibre.jl development, so any session can resume after a crash and a human can see where the work stands and audit it. Direct invocation only — do not select automatically.
+description: Run an XCALibre.jl development session that can be resumed after a crash — sets up the branch and a small journal, keeps a 50-minute progress check, and keeps records small. Use when the user starts, resumes or continues a feature, refactor or debugging effort in XCALibre.jl ("I'm starting a new feature…", "pick up where we left off"). Not for questions or one-off edits.
 ---
 
 # XCALibre Dev Journal
@@ -21,11 +21,20 @@ Three small files under `dev/` record where a development session is and what it
 - **`journal.md`** lines read `<UTC time> <branch>@<sha> <one sentence>`. Log what a later reader needs: a direction chosen, an idea refuted with the number that refuted it, a commit landed, a blocker. Do not log routine commands.
 - **`runs.jsonl`** keeps the numbers from a trial, not its output: what was tried, the command, metrics as `key=value`, and a verdict. Query it with `runs <pattern>` or `jq`. Raw logs are not kept; once the numbers are recorded, delete the log.
 
-Rotation moves a full file to `dev/archive/` and starts a fresh one. Nothing else is required. Any other file under `dev/` should be something that will be read again, kept small and deleted when done.
+Rotation moves a full file to `dev/archive/` and starts a fresh one. Nothing else is required. Keep a file that will be used again, such as a benchmark script or a small fixture, under `dev/scripts/` with a one-line note in `STATUS.md`. Do not keep logs, dumps or one-off output.
+
+## Starting and resuming
+
+When the user says they are starting something ("I'm starting a new feature that…"):
+
+1. If the checkout is on the base branch, update it and create a feature branch with a short descriptive name.
+2. Run `init`, write the request into Goal in `STATUS.md`, and add a first `log` line.
+3. Start the 50-minute check (below), then get on with the work.
+
+When the user asks to resume, or a session starts with a `dev/` already present, run `resume`, read what it prints, restart the 50-minute check and continue from Next.
 
 ## When to write
 
-- **Start:** run `resume`, or `init` the first time, and read what it prints.
 - **After a meaningful step:** add a `log` line, add a `run` for any measurement, and update `STATUS.md` if Now or Next changed.
 - **Before stopping, or when the context is getting long:** make sure Next in `STATUS.md` is exact enough for a cold session to act on.
 

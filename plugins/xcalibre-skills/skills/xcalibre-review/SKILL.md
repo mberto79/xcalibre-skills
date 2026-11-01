@@ -1,11 +1,11 @@
 ---
 name: xcalibre-review
-description: AI review of an XCALibre.jl pull request or diff for PR rules, fit with the XCALibre.jl architecture, performance and correctness. Direct invocation only — do not select automatically; use when the user explicitly runs xcalibre-review or asks for an AI review of a specific XCALibre.jl contribution.
+description: AI review of an XCALibre.jl pull request, branch or diff — PR rules, fit with the existing API and architecture, CPU/GPU/MPI coverage, performance and allocations, and correctness. Use when the user asks to review XCALibre.jl changes ("review this PR").
 ---
 
 # XCALibre Review
 
-AI review of an XCALibre.jl contribution. A human maintainer performs the final review and merge.
+AI review of an XCALibre.jl contribution. When the user asks for a review, take the PR, branch or working diff they name and run the three steps below in order. A human maintainer performs the final review and merge.
 
 ## 1. PR rules
 
@@ -15,8 +15,9 @@ Run `python ../xcalibre-pr/scripts/xcalibre_pr.py preflight` against the target,
 
 Read the changed code against the surrounding XCALibre.jl source, and check the source whenever a claim needs it. Look for:
 
-- **Architecture.** The change follows how XCALibre.jl is built: behaviour selected by dispatch on types, not runtime flags; models and configuration in the existing structs; mesh and field types kept type-stable ([xcalibre-mesh-types](../xcalibre-mesh-types/SKILL.md)); backend-independent loops through `KernelAbstractions.jl` ([xcalibre-kernels](../xcalibre-kernels/SKILL.md)); existing utilities reused rather than duplicated. A parallel code path left with the old behaviour (another solver, equation, solve path or backend) is a finding.
-- **Performance.** XCALibre.jl is a CFD solver, so performance is protected. Flag allocations in per-cell, per-face or per-iteration paths; type instability and abstract containers; temporary arrays from broadcasts, slices or `collect`; work that can be hoisted out of a loop or fused into an existing kernel; extra kernel launches or host–device transfers; scalar indexing or serial loops that block the GPU. Also name clear opportunities to cut allocations or time in the code the change touches, marked as opportunities, not defects. When a claim is uncertain, measure it ([julia-benchmarking](../julia-benchmarking/SKILL.md)).
+- **Architecture.** The change follows how XCALibre.jl is built: behaviour selected by dispatch on types, not runtime flags; models and configuration in the existing structs; mesh and field types kept type-stable ([xcalibre-mesh-types](../xcalibre-mesh-types/SKILL.md)); backend-independent loops through `KernelAbstractions.jl` ([xcalibre-kernels](../xcalibre-kernels/SKILL.md)); existing utilities reused rather than duplicated. A parallel code path left with the old behaviour (another solver, equation or solve path) is a finding.
+- **Every backend.** The change must work on CPU, on GPU through `KernelAbstractions.jl`, and on MPI-distributed meshes, including halo exchanges. Code that only works on one, or that silently falls back to a serial CPU path, is a finding.
+- **Performance and allocations.** XCALibre.jl is a CFD solver, so performance is protected, and allocation is expensive on GPU. Flag any allocation inside the solver iteration, and in per-cell or per-face paths; type instability and abstract containers; temporary arrays from broadcasts, slices or `collect`; work that can be hoisted out of a loop or fused into an existing kernel; extra kernel launches or host–device transfers; scalar indexing or serial loops that block the GPU. Also name clear opportunities to cut allocations or time in the code the change touches, marked as opportunities, not defects. When a claim is uncertain, measure it ([julia-benchmarking](../julia-benchmarking/SKILL.md)).
 - **Correctness.** Obvious bugs and unhandled edge cases.
 
 Verify each candidate against the code and mark it CONFIRMED or PLAUSIBLE. Report only what survives, most severe first; an empty list is a valid result. Prefer a few high-signal findings to nits, and do not modify files unless `--fix` was requested.

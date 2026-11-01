@@ -21,7 +21,14 @@ When a task matches a specialised sibling skill, read its `SKILL.md` and apply i
 - `../xcalibre-kernels/`: write and review idiomatic XCALibre.jl CPU and GPU kernels.
 - `../xcalibre-mesh-types/`: preserve numeric and index type stability in mesh code.
 
-`../xcalibre-dev/`, `../xcalibre-close/`, `../xcalibre-pr/` and `../xcalibre-review/` are direct-invocation workflow skills. Never auto-select them from this umbrella; use one only when the user explicitly invokes it by name or unambiguously asks for that exact workflow (keeping or resuming a development journal, closing a phase or feature, preparing/submitting a pull request, or reviewing one), and apply its repository-changing, Git and posting operations only when the user has authorised those changes.
+Workflow skills, selected by what the user asks for:
+
+- `../xcalibre-dev/`: starting, resuming or continuing a feature, refactor or debugging effort.
+- `../xcalibre-close/`: wrapping up a finished feature before its pull request.
+- `../xcalibre-pr/`: opening, preparing or checking a pull request.
+- `../xcalibre-review/`: reviewing a pull request, branch or diff.
+
+Commits, pushes, pull requests and posted comments still need the user's authorisation.
 
 ## Resources
 

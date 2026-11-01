@@ -1,11 +1,13 @@
 ---
 name: xcalibre-pr
-description: Prepare and verify pull requests against XCALibre.jl project expectations. Direct invocation only — do not select automatically; use when the user explicitly runs xcalibre-pr or asks to check, prepare, or submit a specific XCALibre.jl pull request.
+description: Prepare, check and open an XCALibre.jl pull request under the project rules — one theme per PR, a short changelog entry file, tests, docs, self-contained descriptions and authorship. Use when the user asks to open, prepare, check or submit a pull request for XCALibre.jl work.
 ---
 
 # XCALibre Pull Requests
 
 Prepare a focused, current, tested pull request that follows XCALibre.jl contribution conventions.
+
+When the user asks to open a PR, run the preflight, fix or report what it finds (see **Open items and consent**), and open the pull request through the contributor's account once nothing is left open.
 
 ## Checklist
 
