@@ -683,13 +683,13 @@ def preflight(arguments: argparse.Namespace) -> int:
         vault_files = [path for path in files if path == "dev" or path.startswith("dev/")]
         if vault_files:
             record(
-                "Development vault",
+                "Development journal",
                 "FAIL",
                 f"{len(vault_files)} file(s) under dev/ differ from {base_ref}; untrack them with "
                 "`git rm -r --cached dev`, commit, and keep dev/ in .git/info/exclude",
             )
         else:
-            record("Development vault", "PASS", "no dev/ files in the pull request")
+            record("Development journal", "PASS", "no dev/ files in the pull request")
     except RuntimeError as error:
         record("Change inspection", "FAIL", str(error))
         files = []

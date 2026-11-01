@@ -1,50 +1,39 @@
 ---
 name: xcalibre-review
-description: AI review of an XCALibre.jl pull request or diff for scope, correctness, style and GPU/KernelAbstractions.jl compatibility. Direct invocation only — do not select automatically; use when the user explicitly runs xcalibre-review or asks for an AI review of a specific XCALibre.jl contribution.
+description: AI review of an XCALibre.jl pull request or diff for PR rules, fit with the XCALibre.jl architecture, performance and correctness. Direct invocation only — do not select automatically; use when the user explicitly runs xcalibre-review or asks for an AI review of a specific XCALibre.jl contribution.
 ---
 
 # XCALibre Review
 
-AI-generated review of an XCALibre.jl contribution. Gate on scope first; review code only once the contribution is single-theme. A human maintainer performs the final review and merge.
+AI review of an XCALibre.jl contribution. A human maintainer performs the final review and merge.
 
-## 0. Preflight and scope gate
+## 1. PR rules
 
-1. Run `python ../xcalibre-pr/scripts/xcalibre_pr.py preflight` (same `--repository`/`--base`/`--pr-number` arguments as `xcalibre-pr`) against the target.
-2. Read the reported commits and changed files under "Single theme". If they do not serve one coherent purpose, or the diff touches unrelated features or parts of the codebase, STOP — do not review code. Reply with:
-   - which changes belong to which theme
-   - a proposed split into separate branches/PRs, one theme each
-   - a recommendation to prepare each split contribution with `xcalibre-dev` → `xcalibre-close` → `xcalibre-pr`
-3. Otherwise, carry every other FAIL/REVIEW preflight item (propagation, tests, changelog, docs, examples, comments, dependencies, licences, authorship, AI disclosure) into the final report as open items, and continue to the review. In the review itself, report every parallel code path that keeps the old behaviour (another solver, equation, solve path, backend or document) as a correctness finding.
+Run `python ../xcalibre-pr/scripts/xcalibre_pr.py preflight` against the target, with the same arguments `xcalibre-pr` uses. If the changes do not serve one purpose, stop and propose a split into one PR per theme instead of reviewing the code. Otherwise carry every FAIL and REVIEW item into the report as open items.
 
-## 1. Code review
+## 2. Code review
 
-Read the changed ranges against the rest of the codebase, checking the local XCALibre.jl source when a claim needs verifying, for:
+Read the changed code against the surrounding XCALibre.jl source, and check the source whenever a claim needs it. Look for:
 
-- obvious bugs, edge cases, and performance regressions
-- code that departs from surrounding XCALibre.jl style and naming
-- comments over three lines, or narration instead of an invariant ([xcalibre-dev](../xcalibre-dev/SKILL.md) comment rule)
-- unnecessary allocations, especially in per-cell/per-face hot paths
-- GPU compatibility: serial-only loops that should use `xcal_foreach` or `KernelAbstractions.@kernel` instead ([xcalibre-kernels](../xcalibre-kernels/SKILL.md))
+- **Architecture.** The change follows how XCALibre.jl is built: behaviour selected by dispatch on types, not runtime flags; models and configuration in the existing structs; mesh and field types kept type-stable ([xcalibre-mesh-types](../xcalibre-mesh-types/SKILL.md)); backend-independent loops through `KernelAbstractions.jl` ([xcalibre-kernels](../xcalibre-kernels/SKILL.md)); existing utilities reused rather than duplicated. A parallel code path left with the old behaviour (another solver, equation, solve path or backend) is a finding.
+- **Performance.** XCALibre.jl is a CFD solver, so performance is protected. Flag allocations in per-cell, per-face or per-iteration paths; type instability and abstract containers; temporary arrays from broadcasts, slices or `collect`; work that can be hoisted out of a loop or fused into an existing kernel; extra kernel launches or host–device transfers; scalar indexing or serial loops that block the GPU. Also name clear opportunities to cut allocations or time in the code the change touches, marked as opportunities, not defects. When a claim is uncertain, measure it ([julia-benchmarking](../julia-benchmarking/SKILL.md)).
+- **Correctness.** Obvious bugs and unhandled edge cases.
 
-Verify each candidate against the actual code before reporting it; mark it CONFIRMED or PLAUSIBLE. Report only what survives verification, most severe first — an empty list is a valid result. Prefer fewer, high-signal findings over nits, never flag code that is already correct, and do not modify files unless `--fix` was requested.
+Verify each candidate against the code and mark it CONFIRMED or PLAUSIBLE. Report only what survives, most severe first; an empty list is a valid result. Prefer a few high-signal findings to nits, and do not modify files unless `--fix` was requested.
 
-## 2. Reporting
+## 3. Report
 
-Report findings with `ReportFindings`, each stating briefly what was identified and how to fix it — no essay per finding.
-
-End every review output (chat summary, and each `--comment` posted) with: *"Generated by AI on behalf of the contributor. A human maintainer performs the final review and merge."*
+Report findings with `ReportFindings` where available, otherwise as a list: one line on what is wrong and how to fix it, then the open preflight items. End every review output, including each posted comment, with: *"Generated by AI on behalf of the contributor. A human maintainer performs the final review and merge."*
 
 ## Interface
-
-Inherits `code-review`'s call syntax:
 
 ```text
 xcalibre-review [target] [level] [--comment] [--fix]
 ```
 
-- `target`: omit for the working diff, or pass a PR number, branch, or path.
-- `level`: `low`/`medium` for fewer, high-confidence findings; `high`/`max` for broader coverage. Omit to reuse the level last used this session. The built-in `/code-review ultra` cloud multi-agent review is not available through this skill.
-- `--comment`: post findings as inline PR comments; only with a real PR target, and only after the user confirms posting.
-- `--fix`: apply the reported fixes to the working tree after reporting; only when the user has requested it.
+- `target`: omit for the working diff, or pass a PR number, branch or path.
+- `level`: `low`/`medium` for fewer, high-confidence findings; `high`/`max` for broader coverage.
+- `--comment`: post findings as inline PR comments, only on a real PR and only after the user confirms.
+- `--fix`: apply the reported fixes to the working tree, only when the user asked for it.
 
-Never post comments, push, or modify files without the corresponding flag and the user's confirmation.
+Never post, push or modify files without the matching flag and the user's confirmation.
