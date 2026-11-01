@@ -30,6 +30,7 @@ Keeps a development session recoverable if it crashes or the machine restarts, a
   - `runs.jsonl`: one line per trial with its numbers, easy to filter with `runs <pattern>` or `jq`.
 - **Size limits:** the journal and runs files move to `dev/archive/` when full; raw logs and dumps are not kept. Scripts worth re-running go in `dev/scripts/`.
 - **50-minute check:** every 50 minutes the agent updates `STATUS.md`, asks any running agents for progress and tells you if work has stalled.
+- **Your commits:** every commit is made under your own Git identity, never an agent's, with no AI co-author lines; `init` and `resume` warn if the identity or a commit on the branch breaks this.
 - **Light touch:** it records the work; it does not tell the agent how to do it.
 
 ### `xcalibre-pr`: pull requests

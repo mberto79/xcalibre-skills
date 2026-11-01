@@ -33,6 +33,10 @@ When the user says they are starting something ("I'm starting a new feature that
 
 When the user asks to resume, or a session starts with a `dev/` already present, run `resume`, read what it prints, restart the 50-minute check and continue from Next.
 
+## Commits
+
+Every commit is made under the user's or a collaborator's own Git identity, never an agent's. Before the first commit, check `git config user.name` and `user.email` name a person; if they name an agent (for example `Claude`, `noreply@anthropic.com`, a Codex, Copilot or `[bot]` identity), ask the user for theirs and set it in the repository. Commit messages carry no AI attribution: no `Co-Authored-By` lines naming an AI and no "Generated with…" footers. `init` and `resume` warn when the identity or a commit on the branch breaks this.
+
 ## When to write
 
 - **After a meaningful step:** add a `log` line, add a `run` for any measurement, and update `STATUS.md` if Now or Next changed.

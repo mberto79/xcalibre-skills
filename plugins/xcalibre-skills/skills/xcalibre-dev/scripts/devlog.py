@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -98,6 +99,35 @@ def format_run(text: str) -> str:
     return " | ".join(part for part in parts if part)
 
 
+AGENT_IDENTITY = re.compile(
+    r"(?i)\b(?:claude|anthropic|codex|openai|chatgpt|copilot|gemini|cursor|devin|aider)\b|\[bot\]|noreply@(?:anthropic|openai)"
+)
+AI_TRAILER = re.compile(r"(?im)^(?:co-authored-by:.*(?:claude|anthropic|codex|openai|copilot|gemini|\[bot\]).*|.*generated (?:with|by) .*(?:claude|codex|copilot|chatgpt|gemini|\bai\b).*)$")
+
+
+def authorship_warnings(root: Path) -> list[str]:
+    warnings = []
+    identity = f"{git(root, 'config', 'user.name')} <{git(root, 'config', 'user.email')}>"
+    if AGENT_IDENTITY.search(identity) or identity == " <>":
+        warnings.append(f"Git identity is {identity}; commits must use the user's own name and email (git config user.name/user.email)")
+    # Only this branch's own commits: those not on the base branch, else those not yet pushed.
+    head = git(root, "rev-parse", "HEAD")
+    bases = [git(root, "merge-base", "HEAD", ref) for ref in ("origin/HEAD", "origin/main", "origin/master")]
+    if head in bases:
+        return warnings
+    base = next((b for b in bases if b), "")
+    scope = f"{base}..HEAD" if base else ("@{upstream}..HEAD" if git(root, "rev-parse", "@{upstream}") else "-20")
+    log = git(root, "log", scope, "--format=%h%x1f%an <%ae>%x1f%cn <%ce>%x1f%B%x1e")
+    bad = []
+    for entry in filter(None, (item.strip() for item in log.split("\x1e"))):
+        sha, author, committer, body = (entry.split("\x1f") + ["", "", ""])[:4]
+        if AGENT_IDENTITY.search(author + committer) or AI_TRAILER.search(body):
+            bad.append(sha)
+    if bad:
+        warnings.append("commits with an agent author or AI attribution: " + ", ".join(bad[:10]) + "; ask the user before rewriting them")
+    return warnings
+
+
 def command_init(root: Path, _: argparse.Namespace) -> int:
     dev = root / "dev"
     dev.mkdir(exist_ok=True)
@@ -108,6 +138,8 @@ def command_init(root: Path, _: argparse.Namespace) -> int:
         (dev / name).touch()
     ensure_excluded(root)
     print(f"dev journal ready in {dev}; /dev/ is excluded from Git")
+    for warning in authorship_warnings(root):
+        print(f"WARNING: {warning}")
     return 0
 
 
@@ -126,6 +158,7 @@ def command_resume(root: Path, _: argparse.Namespace) -> int:
     status = dev / "STATUS.md"
     if line_count(status) > STATUS_MAX_LINES:
         warnings.append(f"STATUS.md is over {STATUS_MAX_LINES} lines; trim it to the current state")
+    warnings += authorship_warnings(root)
     legacy = [name for name in LEGACY if (dev / name).is_file()]
     if legacy:
         warnings.append("earlier vault files found (" + ", ".join(legacy) + "); fold what is live into STATUS.md, then archive them")
